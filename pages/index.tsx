@@ -1,11 +1,12 @@
 import React from 'react';
 import Tabs from '../components/Tabs';
+import DrawPanel from '../components/DrawPanel';
+import DrawPanelWithCompute from '../components/DrawPanelWithCompute';
 
 const Home: React.FC = () => {
   const tabs = [
-    { title: 'Tab 1', content: <div>Content for Tab 1</div> },
-    { title: 'Tab 2', content: <div>Content for Tab 2</div> },
-    { title: 'Tab 3', content: <div>Content for Tab 3</div> }
+    { title: '多角形の入力', content: <DrawPanel /> },
+      { title: '展開図の計算', content: <DrawPanelWithCompute />}
   ];
 
   return (
