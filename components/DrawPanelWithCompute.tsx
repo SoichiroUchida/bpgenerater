@@ -1,9 +1,12 @@
 import React, { useRef, useEffect, useState } from 'react';
 import ComputeButton from './ComputeButton';
 
-const DrawPanelWithCompute: React.FC = () => {
+interface DrawPanelWithComputeProps {
+  points: { x: number, y: number }[];
+}
+
+const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [points, setPoints] = useState<{ x: number, y: number }[]>([]);
   const [polygon, setPolygon] = useState<{ x: number, y: number }[]>([]);
 
   const gridSize = 20;
@@ -19,21 +22,6 @@ const DrawPanelWithCompute: React.FC = () => {
       context.lineTo(context.canvas.width, y);
     }
     context.strokeStyle = '#ddd';
-    context.stroke();
-  };
-
-  const drawPointsAndLines = (context: CanvasRenderingContext2D) => {
-    context.beginPath();
-    points.forEach((point, index) => {
-      if (index === 0) {
-        context.moveTo(point.x, point.y);
-      } else {
-        context.lineTo(point.x, point.y);
-      }
-      context.arc(point.x, point.y, 2, 0, 2 * Math.PI);
-    });
-    context.strokeStyle = 'black';
-    context.lineWidth = 2;
     context.stroke();
   };
 
@@ -70,38 +58,23 @@ const DrawPanelWithCompute: React.FC = () => {
       const context = canvas.getContext('2d');
       if (context) {
         clearCanvas();
-        drawPointsAndLines(context);
         drawPolygon(context);
       }
     }
-  }, [points, polygon]);
-
-  const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const rect = canvas.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
-
-      // グリッドにスナップ
-      const snappedX = Math.round(x / gridSize) * gridSize;
-      const snappedY = Math.round(y / gridSize) * gridSize;
-
-      setPoints([...points, { x: snappedX, y: snappedY }]);
-    }
-  };
+  }, [polygon]);
 
   const handleCompute = () => {
     if (points.length < 3) {
       alert('少なくとも3点が必要です');
       return;
     }
-    setPolygon(points);
+    setPolygon([]); // 前回の計算結果を消す
+    setTimeout(() => setPolygon(points), 0); // 新しい計算結果を設定
   };
 
   return (
     <div>
-      <canvas ref={canvasRef} width={800} height={800} style={{ border: '1px solid #000' }} onClick={handleCanvasClick} />
+      <canvas ref={canvasRef} width={500} height={500} style={{ border: '1px solid #000' }} />
       <ComputeButton onClick={handleCompute} />
     </div>
   );

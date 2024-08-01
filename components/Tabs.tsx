@@ -31,7 +31,11 @@ const Tabs: React.FC<TabsProps> = ({ tabs }) => {
         ))}
       </div>
       <div style={{ padding: '20px', border: '1px solid #ddd' }}>
-        {tabs[activeIndex].content}
+        {tabs.map((tab, index) => (
+          <div key={index} style={{ display: activeIndex === index ? 'block' : 'none' }}>
+            {tab.content}
+          </div>
+        ))}
       </div>
     </div>
   );

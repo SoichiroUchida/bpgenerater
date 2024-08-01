@@ -1,14 +1,17 @@
 import React, { useRef, useEffect, useState } from 'react';
 import ClearButton from './ClearButton';
 
-const DrawPanel: React.FC = () => {
+interface DrawPanelProps {
+  onPointsChange: (points: { x: number, y: number }[]) => void;
+}
+
+const DrawPanel: React.FC<DrawPanelProps> = ({ onPointsChange }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [points, setPoints] = useState<{ x: number, y: number }[]>([]);
 
   const gridSize = 20;
 
   const drawGrid = (context: CanvasRenderingContext2D) => {
-    // グリッドを描画
     context.beginPath();
     for (let x = 0; x < context.canvas.width; x += gridSize) {
       context.moveTo(x, 0);
@@ -66,16 +69,18 @@ const DrawPanel: React.FC = () => {
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
 
-      // グリッドにスナップ
       const snappedX = Math.round(x / gridSize) * gridSize;
       const snappedY = Math.round(y / gridSize) * gridSize;
 
-      setPoints([...points, { x: snappedX, y: snappedY }]);
+      const newPoints = [...points, { x: snappedX, y: snappedY }];
+      setPoints(newPoints);
+      onPointsChange(newPoints);
     }
   };
 
   const handleClear = () => {
     setPoints([]);
+    onPointsChange([]);
     const canvas = canvasRef.current;
     if (canvas) {
       const context = canvas.getContext('2d');
@@ -87,7 +92,7 @@ const DrawPanel: React.FC = () => {
 
   return (
     <div>
-      <canvas ref={canvasRef} width={800} height={800} style={{ border: '1px solid #000' }} onClick={handleCanvasClick} />
+      <canvas ref={canvasRef} width={500} height={500} style={{ border: '1px solid #000' }} onClick={handleCanvasClick} />
       <ClearButton onClick={handleClear} />
     </div>
   );
