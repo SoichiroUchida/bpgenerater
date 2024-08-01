@@ -13,7 +13,8 @@ const Home: React.FC = () => {
         title: '多角形の入力',
         content: (
           <div>
-            <h2> konnnitiha</h2>
+            <h2> エラーメッセージ予定地
+            </h2>
             <DrawPanel onPointsChange={setPoints} /> ,
           </div>
         )
@@ -26,7 +27,7 @@ const Home: React.FC = () => {
 
   return (
     <div>
-      <h1>My Tabs</h1>
+      <h1>Box Pleating Generater</h1>
       <Tabs tabs={tabs} />
     </div>
   );
