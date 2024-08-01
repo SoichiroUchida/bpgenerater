@@ -15,7 +15,7 @@ const Home: React.FC = () => {
           <div>
             <h2> エラーメッセージ予定地
             </h2>
-            <DrawPanel onPointsChange={setPoints} /> ,
+            <DrawPanel onPointsChange={setPoints} /> 
           </div>
         )
       },

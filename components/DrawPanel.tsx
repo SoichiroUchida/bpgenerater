@@ -69,8 +69,20 @@ const DrawPanel: React.FC<DrawPanelProps> = ({ onPointsChange }) => {
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
 
-      const snappedX = Math.round(x / gridSize) * gridSize;
-      const snappedY = Math.round(y / gridSize) * gridSize;
+      let snappedX = Math.round(x / gridSize) * gridSize;
+      let snappedY = Math.round(y / gridSize) * gridSize;
+
+      if (points.length > 0) {
+        const lastPoint = points[points.length - 1];
+        const dx = Math.abs(snappedX - lastPoint.x);
+        const dy = Math.abs(snappedY - lastPoint.y);
+
+        if (dx > dy) {
+          snappedY = lastPoint.y;
+        } else {
+          snappedX = lastPoint.x;
+        }
+      }
 
       const newPoints = [...points, { x: snappedX, y: snappedY }];
       setPoints(newPoints);
