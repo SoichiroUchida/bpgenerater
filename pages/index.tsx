@@ -9,8 +9,18 @@ const Home: React.FC = () => {
 
   useEffect(() => {
     setTabs([
-      { title: '多角形の入力', content: <DrawPanel onPointsChange={setPoints} /> },
-      { title: '展開図の出力', content: <DrawPanelWithCompute points={points} /> }
+      { 
+        title: '多角形の入力',
+        content: (
+          <div>
+            <h2> konnnitiha</h2>
+            <DrawPanel onPointsChange={setPoints} /> ,
+          </div>
+        )
+      },
+      { 
+        title: '展開図の出力',
+        content: <DrawPanelWithCompute points={points} /> }
     ]);
   }, [points]);
 
