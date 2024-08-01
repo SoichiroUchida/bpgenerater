@@ -11,23 +11,18 @@ const Home: React.FC = () => {
     setTabs([
       { 
         title: '多角形の入力',
-        content: (
-          <div>
-            <h2> エラーメッセージ予定地
-            </h2>
-            <DrawPanel onPointsChange={setPoints} /> 
-          </div>
-        )
+        content: <DrawPanel onPointsChange={setPoints} />
       },
       { 
         title: '展開図の出力',
-        content: <DrawPanelWithCompute points={points} /> }
+        content: <DrawPanelWithCompute points={points} />
+      }
     ]);
   }, [points]);
 
   return (
     <div>
-      <h1>Box Pleating Generater</h1>
+      <h1>Box Pleating Generator</h1>
       <Tabs tabs={tabs} />
     </div>
   );

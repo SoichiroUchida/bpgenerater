@@ -105,8 +105,11 @@ const DrawPanel: React.FC<DrawPanelProps> = ({ onPointsChange }) => {
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
       <div>
-        <canvas ref={canvasRef} width={533} height={533} style={{ border: '1px solid #000' }} onClick={handleCanvasClick} />
-        <ClearButton onClick={handleClear} />
+        <h2>エラーメッセージ予定地</h2>
+        <div>
+          <canvas ref={canvasRef} width={533} height={533} style={{ border: '1px solid #000' }} onClick={handleCanvasClick} />
+          <ClearButton onClick={handleClear} />
+        </div>
       </div>
     </div>
   );
