@@ -62,34 +62,21 @@ const DrawPanel: React.FC<DrawPanelProps> = ({ onPointsChange }) => {
     }
   }, [points]);
 
-  // DrawPanel.tsx
+  const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
 
-const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-  const canvas = canvasRef.current;
-  if (canvas) {
-    const rect = canvas.getBoundingClientRect();
-    let x = event.clientX - rect.left;
-    let y = event.clientY - rect.top;
+      const snappedX = Math.round(x / gridSize) * gridSize;
+      const snappedY = Math.round(y / gridSize) * gridSize;
 
-    // 水平、垂直方向にスナップ
-    if (points.length > 0) {
-      const lastPoint = points[points.length - 1];
-      if (Math.abs(x - lastPoint.x) < Math.abs(y - lastPoint.y)) {
-        x = lastPoint.x;
-      } else {
-        y = lastPoint.y;
-      }
+      const newPoints = [...points, { x: snappedX, y: snappedY }];
+      setPoints(newPoints);
+      onPointsChange(newPoints);
     }
-
-    const snappedX = Math.round(x / gridSize) * gridSize;
-    const snappedY = Math.round(y / gridSize) * gridSize;
-
-    const newPoints = [...points, { x: snappedX, y: snappedY }];
-    setPoints(newPoints);
-    onPointsChange(newPoints);
-  }
-};
-
+  };
 
   const handleClear = () => {
     setPoints([]);
@@ -104,9 +91,9 @@ const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
   };
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <canvas ref={canvasRef} width={500} height={500} style={{ border: '1px solid #000' }} onClick={handleCanvasClick} />
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+      <div>
+        <canvas ref={canvasRef} width={533} height={533} style={{ border: '1px solid #000' }} onClick={handleCanvasClick} />
         <ClearButton onClick={handleClear} />
       </div>
     </div>

@@ -75,7 +75,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
       <div>
-        <canvas ref={canvasRef} width={500} height={500} style={{ border: '1px solid #000' }} />
+        <canvas ref={canvasRef} width={533} height={533} style={{ border: '1px solid #000' }} />
         <ComputeButton onClick={handleCompute} />
       </div>
     </div>

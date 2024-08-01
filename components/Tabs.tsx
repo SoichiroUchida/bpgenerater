@@ -12,6 +12,10 @@ interface TabsProps {
 const Tabs: React.FC<TabsProps> = ({ tabs }) => {
   const [activeIndex, setActiveIndex] = useState(0);
 
+  if (!tabs || tabs.length === 0) {
+    return <div>No tabs available</div>;
+  }
+
   return (
     <div>
       <div style={{ display: 'flex' }}>
