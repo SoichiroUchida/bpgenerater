@@ -9,9 +9,8 @@ const Home: React.FC = () => {
 
   useEffect(() => {
     setTabs([
-      { title: 'Tab 1', content: <div>Content for Tab 1</div> },
-      { title: 'Tab 2', content: <DrawPanel onPointsChange={setPoints} /> },
-      { title: 'Tab 3', content: <DrawPanelWithCompute points={points} /> }
+      { title: '多角形の入力', content: <DrawPanel onPointsChange={setPoints} /> },
+      { title: '展開図の出力', content: <DrawPanelWithCompute points={points} /> }
     ]);
   }, [points]);
 
