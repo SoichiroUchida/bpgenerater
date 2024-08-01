@@ -1,16 +1,19 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import ComputeButton from './ComputeButton';
+import convexHull from 'convex-hull';
 
 interface DrawPanelWithComputeProps {
   points: { x: number, y: number }[];
 }
 
 const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) => {
+  const [isComputed, setIsComputed] = useState(false);
+  const [hullPoints, setHullPoints] = useState<{ x: number, y: number }[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const drawPointsAndLines = (context: CanvasRenderingContext2D) => {
+  const drawPointsAndLines = (context: CanvasRenderingContext2D, pointsToDraw: { x: number, y: number }[]) => {
     context.beginPath();
-    points.forEach((point, index) => {
+    pointsToDraw.forEach((point, index) => {
       if (index === 0) {
         context.moveTo(point.x, point.y);
       } else {
@@ -18,21 +21,29 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
       }
       context.arc(point.x, point.y, 2, 0, 2 * Math.PI);
     });
+    context.closePath();
     context.strokeStyle = 'black';
     context.lineWidth = 2;
     context.stroke();
   };
 
+  const calculateConvexHull = () => {
+    const formattedPoints = points.map(point => [point.x, point.y]);
+    const hullIndices = convexHull(formattedPoints);
+    const hull = hullIndices.map(([i]) => points[i]);
+    setHullPoints(hull);
+  };
+
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (canvas) {
+    if (canvas && isComputed) {
       const context = canvas.getContext('2d');
       if (context) {
         context.clearRect(0, 0, canvas.width, canvas.height);
-        drawPointsAndLines(context);
+        drawPointsAndLines(context, hullPoints);
       }
     }
-  }, [points]);
+  }, [hullPoints, isComputed]);
 
   const handleDownload = () => {
     const fileName = prompt("ファイル名を入力してください", "drawing.svg");
@@ -41,14 +52,11 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
     const svgContent = `
       <svg xmlns="http://www.w3.org/2000/svg" width="533" height="533" viewBox="0 0 533 533">
         <g fill="none" stroke="black" stroke-width="2">
-          ${points.map((point, index) => {
-            const nextPoint = points[index + 1];
-            if (nextPoint) {
-              return `<line x1="${point.x}" y1="${point.y}" x2="${nextPoint.x}" y2="${nextPoint.y}" />`;
-            }
-            return '';
+          ${hullPoints.map((point, index) => {
+            const nextPoint = hullPoints[index + 1] || hullPoints[0];
+            return `<line x1="${point.x}" y1="${point.y}" x2="${nextPoint.x}" y2="${nextPoint.y}" />`;
           }).join('')}
-          ${points.map(point => `
+          ${hullPoints.map(point => `
             <circle cx="${point.x}" cy="${point.y}" r="2" fill="black" />
           `).join('')}
         </g>
@@ -64,11 +72,16 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
     document.body.removeChild(link);
   };
 
+  const handleCompute = () => {
+    calculateConvexHull();
+    setIsComputed(true);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
       <canvas ref={canvasRef} width={533} height={533} style={{ border: '1px solid #000' }} />
       <div style={{ marginTop: '10px' }}>
-        <ComputeButton />
+        <ComputeButton onClick={handleCompute} />
         <button onClick={handleDownload} style={{ marginLeft: '10px', padding: '10px 20px', cursor: 'pointer' }}>
           ダウンロード
         </button>
