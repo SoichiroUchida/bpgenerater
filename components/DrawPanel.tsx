@@ -62,21 +62,34 @@ const DrawPanel: React.FC<DrawPanelProps> = ({ onPointsChange }) => {
     }
   }, [points]);
 
-  const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const rect = canvas.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
+  // DrawPanel.tsx
 
-      const snappedX = Math.round(x / gridSize) * gridSize;
-      const snappedY = Math.round(y / gridSize) * gridSize;
+const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+  const canvas = canvasRef.current;
+  if (canvas) {
+    const rect = canvas.getBoundingClientRect();
+    let x = event.clientX - rect.left;
+    let y = event.clientY - rect.top;
 
-      const newPoints = [...points, { x: snappedX, y: snappedY }];
-      setPoints(newPoints);
-      onPointsChange(newPoints);
+    // 水平、垂直方向にスナップ
+    if (points.length > 0) {
+      const lastPoint = points[points.length - 1];
+      if (Math.abs(x - lastPoint.x) < Math.abs(y - lastPoint.y)) {
+        x = lastPoint.x;
+      } else {
+        y = lastPoint.y;
+      }
     }
-  };
+
+    const snappedX = Math.round(x / gridSize) * gridSize;
+    const snappedY = Math.round(y / gridSize) * gridSize;
+
+    const newPoints = [...points, { x: snappedX, y: snappedY }];
+    setPoints(newPoints);
+    onPointsChange(newPoints);
+  }
+};
+
 
   const handleClear = () => {
     setPoints([]);
@@ -92,8 +105,10 @@ const DrawPanel: React.FC<DrawPanelProps> = ({ onPointsChange }) => {
 
   return (
     <div>
-      <canvas ref={canvasRef} width={500} height={500} style={{ border: '1px solid #000' }} onClick={handleCanvasClick} />
-      <ClearButton onClick={handleClear} />
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <canvas ref={canvasRef} width={500} height={500} style={{ border: '1px solid #000' }} onClick={handleCanvasClick} />
+        <ClearButton onClick={handleClear} />
+      </div>
     </div>
   );
 };
