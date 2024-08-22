@@ -1,13 +1,13 @@
 import React from 'react';
 
-interface ComputeButtonProps {
+interface UndoButtonProps {
   onClick: () => void;
 }
 
-const ComputeButton: React.FC<ComputeButtonProps> = ({ onClick }) => {
+const ComputeButton: React.FC<UndoButtonProps> = ({ onClick }) => {
   return (
     <button onClick={onClick} style={{ padding: '10px 20px', cursor: 'pointer' }}>
-      計算
+      1つ戻る
     </button>
   );
 };

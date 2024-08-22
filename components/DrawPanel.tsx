@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import ClearButton from './ClearButton';
+import UndoButton from './UndoButton';
 
 interface DrawPanelProps {
   onPointsChange: (points: { x: number, y: number }[]) => void;
@@ -102,13 +103,30 @@ const DrawPanel: React.FC<DrawPanelProps> = ({ onPointsChange }) => {
     }
   };
 
+  const handleUndo = () => {
+    if (points.length === 0) return;
+    const newPoints = points.slice(0, -1); 
+    setPoints(newPoints); 
+    onPointsChange(newPoints);
+    const canvas = canvasRef.current; 
+    if (canvas) {
+      const context = canvas.getContext('2d'); 
+      if (context) {
+        clearCanvas(); 
+        drawPointsAndLines(context);
+      }
+    }
+  };
+  
+
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
       <div>
         <h2>エラーメッセージ予定地</h2>
         <div>
-          <canvas ref={canvasRef} width={533} height={533} style={{ border: '1px solid #000' }} onClick={handleCanvasClick} />
           <ClearButton onClick={handleClear} />
+          <UndoButton onClick={handleUndo} />
+          <canvas ref={canvasRef} width={533} height={533} style={{ border: '1px solid #000' }} onClick={handleCanvasClick} />
         </div>
       </div>
     </div>

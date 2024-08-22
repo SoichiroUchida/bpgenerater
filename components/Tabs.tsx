@@ -26,7 +26,7 @@ const Tabs: React.FC<TabsProps> = ({ tabs }) => {
             style={{
               padding: '10px 20px',
               cursor: 'pointer',
-              backgroundColor: activeIndex === index ? '#ddd' : '#fff',
+              backgroundColor: activeIndex === index ? '#fff' : '#ddd',
               borderBottom: activeIndex === index ? '2px solid black' : 'none'
             }}
           >
