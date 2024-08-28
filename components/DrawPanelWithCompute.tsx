@@ -5,76 +5,86 @@ interface DrawPanelWithComputeProps {
   points: { x: number, y: number }[];
 }
 
+interface Point {
+  x: number;
+  y: number;
+}
+interface Concave {
+  concavePoints: Point[];
+}
+interface Rectangle {
+  topLeft: { x: number, y: number };
+  topRight: { x: number, y: number };
+  bottomRight: { x: number, y: number };
+  bottomLeft: { x: number, y: number };
+}
+
 const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) => {
   const [isComputed, setIsComputed] = useState(false);
   const [STPoints, setSTPoints] = useState<{ x: number, y: number }[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const drawRectangle = (
-    context: CanvasRenderingContext2D,
-    { x1, x2, y1, y2 }: { x1: number, x2: number, y1: number, y2: number }
-  ) => {
-    context.beginPath();
-    context.moveTo(x1, y1);
-    context.lineTo(x2, y1);
-    context.lineTo(x2, y2);
-    context.lineTo(x1, y2);
-    context.closePath();
-    context.strokeStyle = 'blue';
-    context.lineWidth = 2;
-    context.stroke();
+  console.log('points', points);
+
+  const calculateRectangle = (points: { x: number, y: number }[]): Rectangle => { 
+    // 配列pointsからx座標を取り出しxValues配列として格納する。
+    const xValues = points.map(point => point.x);
+    const yValues = points.map(point => point.y);
+
+    const xMin = Math.min(...xValues);
+    const xMax = Math.max(...xValues);
+    const yMin = Math.min(...yValues);
+    const yMax = Math.max(...yValues);
+    
+    return {
+      topLeft: { x: xMin, y: yMax },
+      topRight: { x: xMax, y: yMax },
+      bottomRight: { x: xMax, y: yMin },
+      bottomLeft: { x: xMin, y: yMin },
+    };
   };
 
-  const drawPointsAndLines = (context: CanvasRenderingContext2D, pointsToDraw: { x: number, y: number }[]) => {
-    context.beginPath();
-    pointsToDraw.forEach((point, index) => {
-      if (index === 0) {
-        context.moveTo(point.x, point.y);
-      } else {
-        context.lineTo(point.x, point.y);
+  const calculateConcave = (rectangle: Rectangle, points: Point[]): Concave => {
+    const concave: Point[] = [];
+  
+    points.forEach((point) => {
+      // 辺上にあるかを判定するフラグ
+      let isOnEdge = false;
+  
+      // 長方形の上辺または下辺上にあるかをチェック
+      if (
+        (point.y === rectangle.topLeft.y || point.y === rectangle.bottomLeft.y)
+      ) {
+        isOnEdge = true;
       }
-      context.arc(point.x, point.y, 2, 0, 2 * Math.PI);
-    });
-    context.closePath();
-    context.strokeStyle = 'black';
-    context.lineWidth = 2;
-    context.stroke();
-  };
-
-  const ComputeSTDifference = (context: CanvasRenderingContext2D, boundingBox: { x1: number, x2: number, y1: number, y2: number }, points: { x: number, y: number }[]) => {
-    // まず、S全体を描画します（背景として）
-    context.fillStyle = 'lightgray';
-    context.fillRect(boundingBox.x1, boundingBox.y1, boundingBox.x2 - boundingBox.x1, boundingBox.y2 - boundingBox.y1);
-
-    // 次に、T（点列）を描画してその部分をクリアします
-    context.globalCompositeOperation = 'destination-out';
-    context.beginPath();
-    points.forEach((point, index) => {
-      if (index === 0) {
-        context.moveTo(point.x, point.y);
-      } else {
-        context.lineTo(point.x, point.y);
+      if (
+        (point.x === rectangle.topLeft.x || point.x === rectangle.topRight.x) 
+      ) {
+        isOnEdge = true;
+      }
+  
+      // 辺上にない場合、concaveに追加
+      if (!isOnEdge) {
+        concave.push(point);
       }
     });
-    context.closePath();
-    context.fillStyle = 'white';
-    context.fill();
-    context.globalCompositeOperation = 'source-over';
+  
+    // concave配列を含むConcaveオブジェクトを返す
+    return { concavePoints: concave };
   };
+  
 
-  "hullPoints または isComputed の値が変更されたときに、この useEffect が実行され、キャンパス上の描画を更新する。"
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas && isComputed) {
       const context = canvas.getContext('2d');
       if (context) {
         context.clearRect(0, 0, canvas.width, canvas.height);
-        drawPointsAndLines(context, STPoints);
+        // 必要に応じてここに描画コードを追加
       }
     }
   }, [STPoints, isComputed]);
 
-  "SVGのダウンロードのメソッド"
   const handleDownload = () => {
     const fileName = prompt("ファイル名を入力してください", "drawing.svg");
     if (!fileName) return;
@@ -107,17 +117,12 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
     if (canvas) {
       const context = canvas.getContext('2d');
       if (context) {
-        context.clearRect(0, 0, canvas.width, canvas.height);
-        const xValues = points.map(point => point.x);
-        const yValues = points.map(point => point.y);
-        const boundingBox = {
-          x1: Math.min(...xValues),
-          x2: Math.max(...xValues),
-          y1: Math.min(...yValues),
-          y2: Math.max(...yValues)
-        };
+        const rectangle = calculateRectangle(points);
+        console.log('長方形', rectangle)
 
-        ComputeSTDifference(context, boundingBox, points);
+        const concave = calculateConcave(rectangle, points);
+        console.log('凹部分', concave)
+
         setIsComputed(true);
       }
     }
