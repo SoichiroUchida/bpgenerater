@@ -9,14 +9,18 @@ interface Point {
   x: number;
   y: number;
 }
-interface Concave {
+interface ConcavePoints {
   concavePoints: Point[];
 }
+interface ConcaveSet {
+  points: Point[];
+}
+
 interface Rectangle {
-  topLeft: { x: number, y: number };
-  topRight: { x: number, y: number };
-  bottomRight: { x: number, y: number };
-  bottomLeft: { x: number, y: number };
+  topLeft: Point;
+  topRight: Point;
+  bottomRight: Point;
+  bottomLeft: Point;
 }
 
 const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) => {
@@ -26,8 +30,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
 
   console.log('points', points);
 
-  const calculateRectangle = (points: { x: number, y: number }[]): Rectangle => { 
-    // 配列pointsからx座標を取り出しxValues配列として格納する。
+  const calculateRectangle = (points: { x: number, y: number }[]): Rectangle => {
     const xValues = points.map(point => point.x);
     const yValues = points.map(point => point.y);
 
@@ -35,7 +38,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
     const xMax = Math.max(...xValues);
     const yMin = Math.min(...yValues);
     const yMax = Math.max(...yValues);
-    
+
     return {
       topLeft: { x: xMin, y: yMax },
       topRight: { x: xMax, y: yMax },
@@ -44,43 +47,88 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
     };
   };
 
-  const calculateConcave = (rectangle: Rectangle, points: Point[]): Concave => {
-    const concave: Point[] = [];
+  const calculateConcave = (rectangle: Rectangle, points: Point[]): ConcaveSet[] => {
+    const concaveIndices: number[] = [];
+    let firstIndexAdded = false;
   
-    points.forEach((point) => {
-      // 辺上にあるかを判定するフラグ
-      let isOnEdge = false;
+    // pointsの要素を順に探索し、もしそれがRectangleの辺上に含まれる場合、そのインデックスをconcaveIndicesに格納する
+    points.forEach((point, index) => {
+      const isOnEdge = 
+        (point.y === rectangle.topLeft.y) || // 上辺
+        (point.y === rectangle.bottomLeft.y) || // 下辺
+        (point.x === rectangle.topLeft.x) || // 左辺
+        (point.x === rectangle.topRight.x); // 右辺
   
-      // 長方形の上辺または下辺上にあるかをチェック
-      if (
-        (point.y === rectangle.topLeft.y || point.y === rectangle.bottomLeft.y)
-      ) {
-        isOnEdge = true;
-      }
-      if (
-        (point.x === rectangle.topLeft.x || point.x === rectangle.topRight.x) 
-      ) {
-        isOnEdge = true;
-      }
-  
-      // 辺上にない場合、concaveに追加
       if (!isOnEdge) {
-        concave.push(point);
+        concaveIndices.push(index);
+  
+        // 最初の点のインデックスが追加された場合の処理
+        if (index === 0) {
+          firstIndexAdded = true;
+        }
       }
     });
   
-    // concave配列を含むConcaveオブジェクトを返す
-    return { concavePoints: concave };
+    // 連番が同じグループに入るようにグループ分け
+    const groupedIndices: number[][] = [];
+    let currentGroup: number[] = [];
+  
+    concaveIndices.forEach((index) => {
+      if (currentGroup.length === 0 || index === currentGroup[currentGroup.length - 1] + 1) {
+        currentGroup.push(index);
+      } else {
+        groupedIndices.push(currentGroup);
+        currentGroup = [index];
+      }
+    });
+  
+    // 最後のグループを追加
+    if (currentGroup.length > 0) {
+      groupedIndices.push(currentGroup);
+    }
+  
+    // 各グループに対して、前後のインデックスを追加する
+    groupedIndices.forEach((group) => {
+      if (group[0] > 0) {
+        group.unshift(group[0] - 1);
+      }
+      if (group[group.length - 1] < points.length - 1) {
+        group.push(group[group.length - 1] + 1);
+      }
+    });
+
+    // 最初のインデックスが追加されている場合、最初と最後のグループを結合する
+    if (firstIndexAdded && groupedIndices.length > 1) {
+      const firstGroup = groupedIndices[0];
+      const lastGroup = groupedIndices[groupedIndices.length - 1];
+
+      // lastGroupの最後の1つの点を削除
+      const modifiedLastGroup = lastGroup.slice(0, -1);
+
+      // グループを接合
+      const combinedGroup = [...modifiedLastGroup, ...firstGroup];
+      
+      // 最初と最後のグループを結合して、groupedIndicesの最初の位置に格納し、最後のグループを削除
+      groupedIndices[0] = combinedGroup;
+      groupedIndices.pop();
+    }
+
+  
+    // グループ分けされたインデックスに対応するPointsの点を、グループの構造を保ったまま抽出
+    const concaveSets: ConcaveSet[] = groupedIndices.map((group) => ({
+      points: group.map(index => points[index])
+    }));
+  
+    return concaveSets;
   };
   
-
+  
   useEffect(() => {
     const canvas = canvasRef.current;
     if (canvas && isComputed) {
       const context = canvas.getContext('2d');
       if (context) {
         context.clearRect(0, 0, canvas.width, canvas.height);
-        // 必要に応じてここに描画コードを追加
       }
     }
   }, [STPoints, isComputed]);
@@ -118,10 +166,10 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
       const context = canvas.getContext('2d');
       if (context) {
         const rectangle = calculateRectangle(points);
-        console.log('長方形', rectangle)
+        console.log('長方形', rectangle);
 
-        const concave = calculateConcave(rectangle, points);
-        console.log('凹部分', concave)
+        const concave = calculateConcave(rectangle, points)
+        console.log('凹集合', concave);
 
         setIsComputed(true);
       }
