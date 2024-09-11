@@ -134,7 +134,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
   const calculateCoveringRectangle = (concaveSets: ConcaveSet[]): Rectangle[] => {
     const rectangles: Rectangle[] = [];
 
-    const createInscribedRectangle = (firstPoint: Point, movedFirstPoint: Point, lastPoint: Point, movedLastPoint: Point) => {
+    const createRectangle = (firstPoint: Point, movedFirstPoint: Point, lastPoint: Point, movedLastPoint: Point) => {
       return {
         vertex1: firstPoint,
         vertex2: movedFirstPoint,
@@ -206,7 +206,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
               };
             }
           }
-          rectangles.push(createInscribedRectangle(firstPoint, tempMovedFirstPoint, tempMovedFirstPoint, firstPoint));
+          rectangles.push(createRectangle(firstPoint, tempMovedFirstPoint, tempMovedFirstPoint, firstPoint));
 
           // 最初と最後が一致しない場合
         } else {
@@ -251,12 +251,18 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
               };
             }
           }
-          rectangles.push(createInscribedRectangle(firstPoint, tempMovedFirstPoint, tempMovedLastPoint, lastPoint));
+          rectangles.push(createRectangle(firstPoint, tempMovedFirstPoint, tempMovedLastPoint, lastPoint));
         }
       } else {
         // 入口非平行型
-        const movedFirstPoint: Point = {x: firstPoint.x + shiftX, y: firstPoint.y + shiftY};
-        const movedLastPoint: Point = {x: lastPoint.x + shiftX, y: lastPoint.y + shiftY};
+        const movedFirstPoint: Point = {x: firstPoint.x, y: firstPoint.y};
+        const movedLastPoint: Point = {x: lastPoint.x, y: lastPoint.y};
+
+        if (shiftX == 0) {
+          movedLastPoint.y = firstPoint.y;
+        } else {
+          movedLastPoint.x = firstPoint.x;
+        };
 
         let intersectionFound = false;
         let tempMovedFirstPoint = { ...movedFirstPoint };
@@ -268,7 +274,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
           iterationCount++;
 
           if (iterationCount > maxIterations) {
-            console.error("エラー: （非一致型）反復回数が多すぎます。");
+            console.error("エラー: （非平行型）反復回数が多すぎます。");
             break;
           }
 
@@ -296,10 +302,9 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points }) =
             };
           }
         }
-        rectangles.push(createInscribedRectangle(firstPoint, tempMovedFirstPoint, tempMovedLastPoint, lastPoint));
+        rectangles.push(createRectangle(firstPoint, tempMovedFirstPoint, movedLastPoint, tempMovedLastPoint));
       }
     });
-
     return rectangles;
   };
 
