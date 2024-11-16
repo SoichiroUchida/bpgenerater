@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ComputeButton from './ComputeButton';
 import { promises } from 'dns';
+import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime';
 
 interface DrawPanelWithComputeProps {
   points: { x: number; y: number }[];
@@ -16,49 +17,83 @@ interface TreeNode {
   children: TreeNode[];
 }
 
-const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: concavePoints }) => {
+interface Shift {
+  shiftX: number;
+  shiftY: number;
+}
+
+interface ThreeParts {
+  shift: Shift;
+  leftPart: Point[];
+  centerPart: Point[];
+  rightPart: Point[];
+}
+
+const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: polygonPoints }) => {
   const [isComputed, setIsComputed] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scale = 20;
   const epsilon = 1e-10;
   let maxIterations = 20;
 
-  // ２つの点が一致するかを判定する関数。
-  function arePointsEqual(p1: Point, p2: Point): boolean {
-    return Math.abs(p1.x - p2.x) < epsilon && Math.abs(p1.y - p2.y) < epsilon;
+  interface Point {
+    x: number;
+    y: number;
+  }
+  
+  // 多角形の頂点が反時計回りかを判定する関数。
+  function isClockwise(points: Point[]): boolean {
+    let sum = 0;
+    const n = points.length;
+    for (let i = 0; i < n; i++) {
+      const current = points[i];
+      const next = points[(i + 1) % n];
+      sum += (next.x - current.x) * (next.y + current.y);
+    }
+    return sum > 0;
   }
 
-  //　ある点がある点集合の中に含まれているか判定する関数
-  function isPointInPointSet(point: Point, pointSet: Point[]): boolean {
-    return pointSet.some(p => arePointsEqual(p, point));
+  //　2点がなすベクトルの向きを計算する関数
+  function getVectorDirection(p1: Point, p2: Point): {shiftX: number, shiftY: number} {
+  let shiftX = 0;
+  let shiftY = 0;
+
+  // 進行方向の計算
+  if (p1.y === p2.y)
+    shiftX = p1.x < p2.x ? scale : -1 * scale;
+  else shiftY = p1.y < p2.y ? scale : -1 * scale;
+
+  return {shiftX, shiftY}
+
+  }
+  
+  //　連続する同じ点を解消する関数
+  function removeConsecutiveDuplicates(points: Point[]): Point[] {
+    if (points.length === 0) return []; // 空配列の場合、すぐに返す
+
+    const uniquePoints: Point[] = [points[0]]; // 最初の点を必ず追加
+
+    for (let i = 1; i < points.length; i++) {
+      const prevPoint = uniquePoints[uniquePoints.length - 1]; // 直前の点
+      const currentPoint = points[i];
+
+      // 直前の点と現在の点が異なる場合のみ追加
+      if (prevPoint.x !== currentPoint.x || prevPoint.y !== currentPoint.y) {
+        uniquePoints.push(currentPoint);
+      }
+    }
+
+    return uniquePoints;
   }
 
-  // 点が線分の両端に存在するか判定する関数
-  const isPointOnEndpoints = (p: Point, a: Point, b: Point): boolean => {
-    return (p.x === a.x && p.y === a.y) || (p.x === b.x && p.y === b.y);
-  };
-
-  // 3点が共線かどうかを判定する関数
-  const isColinear = (a: Point, b: Point, c: Point): boolean =>
-    Math.abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)) < epsilon;
-
-  // 区間が重なっているかを判定する関数（長さが正の重なり）
-  const isOverlapping = (
-    a1: number,
-    a2: number,
-    b1: number,
-    b2: number
-  ): boolean => {
-    const [minA, maxA] = a1 < a2 ? [a1, a2] : [a2, a1];
-    const [minB, maxB] = b1 < b2 ? [b1, b2] : [b2, b1];
-    const overlap = Math.min(maxA, maxB) - Math.max(minA, minB);
-    return overlap > epsilon;
-  };
-
-  // 真ん中の値が両端の値の間に存在するかを判定する関数。
-  // 点が一致する場合は順番が正しくないと判定する。
-  const isBetween = (a: number, b: number, c: number) =>
-    (a < b && b < c) || (c < b && b < a);
+  // 多角形の頂点を反時計回りにソートする関数。
+  function ensureCounterClockwise(points: Point[]): Point[] {
+    if (isClockwise(points)) {
+      return points.slice().reverse(); // 頂点列を反転して反時計回りに
+    } else {
+      return points.slice(); // コピーを返して元の配列を変更しない
+    }
+  }
 
   // 点集合に含まれるx座標y座標の最小値と最大値を取得する
   const getMinMaxXY = (points: Point[]) => {
@@ -168,20 +203,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: con
     return windingNumber !== 0;
   }
 
-  // ２点のうち、多角形に含まれるほうを返す関数
-  function selectValidPoint(point1: Point, point2: Point, concavePoints: Point[]): Point {
-    const isPoint1Valid = isPointInsideOrPartialPolygon(point1, concavePoints);
-    const isPoint2Valid = isPointInsideOrPartialPolygon(point2, concavePoints);
-  
-    if (isPoint1Valid && !isPoint2Valid) {
-      return point1;
-    } else if (!isPoint1Valid && isPoint2Valid) {
-      return point2;
-    } else {
-      throw new Error('入力された2つの点のうち、一方のみが isPoint 関数で true を返す必要があります。');
-    }
-  }
-
   // ある１点が多角形の辺上に存在するか判定する関数
   function isPointPartialPolygon(point: Point, polygon: Point[]): boolean {
   
@@ -202,7 +223,31 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: con
     return isPointInsidePolygon(point, polygon) || isPointPartialPolygon(point, polygon);
   }
 
-  // （メイン関数１）凹み部分を計算する
+  // 入力値の前処理
+  function processPoints(points: Point[]): Point[] {
+    const newPoints = points.slice(0, -1);
+  
+    if (newPoints.length === 0) {
+      return [];
+    }
+  
+    const maxX = Math.max(...newPoints.map(point => point.x));
+  
+    const maxXPoints = newPoints.filter(point => point.x === maxX);
+    const maxPoint = maxXPoints.reduce((prev, current) => {
+      return current.y > prev.y ? current : prev;
+    });
+  
+    const index = newPoints.findIndex(
+      point => point.x === maxPoint.x && point.y === maxPoint.y
+    );
+
+    const rotatedPoints = newPoints.slice(index).concat(newPoints.slice(0, index));
+  
+    return rotatedPoints;
+  }
+
+  // 凹み部分を計算する
   const getConcaveParts = (polygon: Point[]): Point[][] => {
     const boundingRectangle = computeBoundingRectangle(polygon);
 
@@ -240,441 +285,166 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: con
     return groupedIndices.map((group) => group.map((index) => polygon[index]));
   };
 
-  // 近い点と遠い点を判定する
-  function getNearestAndFarthestPoint(p: Point, a: Point, b: Point): { near: Point; far: Point } {
-    // 距離を計算する関数
-    function distance(point1: Point, point2: Point): number {
-      const dx = point1.x - point2.x;
-      const dy = point1.y - point2.y;
-      return Math.sqrt(dx * dx + dy * dy);
+  // ある１点でポリゴンを２分割する関数
+  // rightPart専用
+  function splitLeftPolygonIntoTwo(polygonVertices: Point[], point: Point): [Point[], Point[]] {
+    const n = polygonVertices.length;
+  
+    // isPointOnLineSegmentがtrueになる最大のインデックスを探す
+    const index = polygonVertices.reduce((maxIndex, start, i) => {
+      const end = polygonVertices[(i + 1) % n];
+      return isPointOnLineSegment(point, start, end) ? i : maxIndex;
+    }, -1);
+  
+    if (index === -1) {
+      throw new Error('指定された点は多角形の外周上にありません。');
     }
-
-    // pからa、bまでの距離を計算
-    const distanceA = distance(p, a);
-    const distanceB = distance(p, b);
-
-    // 比較してnearとfarを決定
-    if (distanceA < distanceB) {
-      return { near: a, far: b };
-    } else if (distanceB < distanceA) {
-      return { near: b, far: a };
-    } else {
-      // 距離が等しい場合はaをnear、bをfarとする
-      return { near: a, far: b };
-    }
-  }
-
-  //　2点がなすベクトルの向きを計算する関数
-  function getVectorDirection(p1: Point, p2: Point): {shiftX: number, shiftY: number} {
-    let shiftX = 0;
-    let shiftY = 0;
-
-    // 進行方向の計算
-    if (p1.y === p2.y)
-      shiftX = p1.x < p2.x ? scale : -1 * scale;
-    else shiftY = p1.y < p2.y ? scale : -1 * scale;
-
-    return {shiftX, shiftY}
-
-  }
-
-  // 非平行型の凹みの分類関数
-  function getTypeOfConcave(firstPoint: Point, lastPoint: Point, nextPoint: Point): boolean {
-    if (isBetween(nextPoint.x, firstPoint.x, lastPoint.x) || isBetween(nextPoint.y, firstPoint.x, lastPoint.y)) {
-      return true;
-    } else {
-      return false;
-    }
-  }
-
-  // 内接長方形の探索の終了判定（幅のある平行型）
-  // ２つの線分が長さ正の共通部分を持つかを判定する。
-  function areLineSegmentsOverlapping(
-    p1: Point,
-    p2: Point,
-    q1: Point,
-    q2: Point
-  ): boolean {
-    // まず、4点が共線かどうかを確認
-    if (isColinear(p1, p2, q1) && isColinear(p1, p2, q2)) {
-      // 線分が水平か垂直かを判定
-      if (Math.abs(p1.x - p2.x) < epsilon) {
-        // 垂直線分の場合は y軸方向のみ確認
-        return isOverlapping(p1.y, p2.y, q1.y, q2.y);
-      } else if (Math.abs(p1.y - p2.y) < epsilon) {
-        // 水平線分の場合は x軸方向のみ確認
-        return isOverlapping(p1.x, p2.x, q1.x, q2.x);
-      } else {
-        // 斜めの線分の場合は両方の軸で確認
-        const overlapX = isOverlapping(p1.x, p2.x, q1.x, q2.x);
-        const overlapY = isOverlapping(p1.y, p2.y, q1.y, q2.y);
-        return overlapX && overlapY;
-      }
-    }
-    return false;
+  
+    // 分割処理と重複点の削除
+    const firstPolygon = removeConsecutiveDuplicates([
+      ...polygonVertices.slice(0, index + 1),
+      point,
+    ]);
+  
+    const secondPolygon = removeConsecutiveDuplicates([
+      point,
+      ...polygonVertices.slice(index + 1),
+    ]);
+  
+    return [firstPolygon, secondPolygon];
   }
   
-  // 内接長方形の探索の終了判定（幅のない平行型）
-  // ２本の線分が両端を除く点で交差するかを判定する関数。
-  const doLinesInternalIntersect = (
-    pointA: Point,
-    pointB: Point,
-    start: Point,
-    end: Point
-  ): boolean => {
 
-    if (start.x === end.x) {
-      return isBetween(pointA.x, start.x, pointB.x) && isBetween(start.y, pointA.y, end.y);
-    } else {
-      return isBetween(pointA.y, start.y, pointB.y) && isBetween(start.x, pointA.x, end.x);
+  // ある１点でポリゴンを２分割する関数
+  // rightPart専用
+  function splitRightPolygonIntoTwo(polygonVertices: Point[], point: Point): [Point[], Point[]] {
+    const n = polygonVertices.length;
+  
+    // 分割点が存在する辺を探す
+    const index = polygonVertices.findIndex((start, i) => 
+      isPointOnLineSegment(point, start, polygonVertices[(i + 1) % n])
+    );
+  
+    if (index === -1) {
+      throw new Error('指定された点は多角形の外周上にありません。');
     }
-  };
+  
+    // 分割処理と重複点の削除
+    const firstPolygon = removeConsecutiveDuplicates([
+      ...polygonVertices.slice(0, index + 1),
+      point,
+    ]);
+  
+    const secondPolygon = removeConsecutiveDuplicates([
+      point,
+      ...polygonVertices.slice(index + 1),
+    ]);
+  
+    return [firstPolygon, secondPolygon];
+  }
+  
 
-  // １つの凹みに対する内接長方形の計算
-  const computeInnerRectangle = (concavePoints: Point[]): Point[] => {
-
+  // １つの凹みから３パーツを計算する関数。
+  const concaveToThreeParts = (concavePoints: Point[]): ThreeParts => {
     const firstPoint = concavePoints[0];
-    const lastPoint = concavePoints[concavePoints.length - 1];
     const nextPoint = concavePoints[1];
+    const lastPoint = concavePoints[concavePoints.length - 1];
 
-    let firstShiftX = 0;
-    let firstShiftY = 0;
+    const shiftDirection = getVectorDirection(firstPoint, nextPoint);
+    const movedFirstPoint: Point = { x: firstPoint.x + shiftDirection.shiftX, y: firstPoint.y + shiftDirection.shiftY};
+    const movedLastPoint: Point = { x: lastPoint.x + shiftDirection.shiftX, y: lastPoint.y + shiftDirection.shiftY };
 
-    // 進行方向の計算
-    if (firstPoint.y === nextPoint.y)
-      firstShiftX = firstPoint.x < nextPoint.x ? scale : -1 * scale;
-    else firstShiftY = firstPoint.y < nextPoint.y ? scale : -1 * scale;
+    let tempMovedFirstPoint = { ...movedFirstPoint };
 
-    // 入口平行型と非平行で場合分け
-    if (firstPoint.x === lastPoint.x || firstPoint.y === lastPoint.y) {
+    while (isPointInsideOrPartialPolygon(tempMovedFirstPoint, concavePoints)) {
+      tempMovedFirstPoint = {
+        x: tempMovedFirstPoint.x + (0.5 * shiftDirection.shiftX),
+        y: tempMovedFirstPoint.y + (0.5 * shiftDirection.shiftY),
+      };
+    }
 
-      // 入口平行型の凹みに対するアルゴリズム
-      const movedFirstPoint: Point = { x: firstPoint.x + firstShiftX, y: firstPoint.y + firstShiftY };
-      const movedLastPoint: Point = { x: lastPoint.x + firstShiftX, y: lastPoint.y + firstShiftY };
-      
-      // 最初と最後の点が一致する場合
-      if (firstPoint.x === lastPoint.x && firstPoint.y === lastPoint.y) {
+    tempMovedFirstPoint = {
+      x: tempMovedFirstPoint.x - (0.5 * shiftDirection.shiftX),
+      y: tempMovedFirstPoint.y - (0.5 * shiftDirection.shiftY),
+    };
 
-        let tempMovedFirstPoint = { ...movedFirstPoint };
+    const leftAndCenterConcaves = splitRightPolygonIntoTwo(concavePoints, tempMovedFirstPoint)
 
-        while (isPointInsideOrPartialPolygon(tempMovedFirstPoint, concavePoints)) {
-          tempMovedFirstPoint = {
-            x: tempMovedFirstPoint.x + (0.5 * firstShiftX),
-            y: tempMovedFirstPoint.y + (0.5 * firstShiftY),
-          };
-        }
+    if(
+        Math.abs(concavePoints[0].x - concavePoints[concavePoints.length - 1].x) < epsilon 
+        || Math.abs(concavePoints[0].y - concavePoints[concavePoints.length - 1].y) < epsilon
+      ) {
 
-        tempMovedFirstPoint = {
-          x: tempMovedFirstPoint.x - (0.5 * firstShiftX),
-          y: tempMovedFirstPoint.y - (0.5 * firstShiftY),
+      let tempMovedLastPoint = { ...movedLastPoint };
+      let iterations = 0
+
+      while (isPointInsideOrPartialPolygon(tempMovedLastPoint, concavePoints)) {
+        tempMovedLastPoint = {
+          x: tempMovedLastPoint.x + (0.5 * shiftDirection.shiftX),
+          y: tempMovedLastPoint.y + (0.5 * shiftDirection.shiftY),
+          
         };
 
-        return [
-          firstPoint, 
-          tempMovedFirstPoint, 
-          tempMovedFirstPoint,
-          firstPoint
-        ];
-      } else {
+        iterations++;
 
-        // 幅がある平行型
-        let intersectionFound = false;
-        let tempMovedFirstPoint = { ...movedFirstPoint };
-        let tempMovedLastPoint = { ...movedLastPoint };
-
-        let iterationCount = 0;
-        while (!intersectionFound) {
-          iterationCount++;
-
-          if (iterationCount > maxIterations) {
-            console.error('エラー: （平行型）反復回数が多すぎます。');
-            break;
-          }
-
-          for (let i = 0; i < concavePoints.length; i++) {
-            const start = concavePoints[i];
-            const end = concavePoints[(i + 1) % concavePoints.length];
-
-            if (areLineSegmentsOverlapping(tempMovedLastPoint, tempMovedFirstPoint, start, end)) {
-              intersectionFound = true;
-              break;
-            }
-          }
-
-          // 交差が見つかっていない場合は、ポイントを更新
-          if (!intersectionFound) {
-            tempMovedFirstPoint = {
-              x: tempMovedFirstPoint.x + firstShiftX,
-              y: tempMovedFirstPoint.y + firstShiftY,
-            };
-            tempMovedLastPoint = {
-              x: tempMovedLastPoint.x + firstShiftX,
-              y: tempMovedLastPoint.y + firstShiftY,
-            };
-          }
+        if (iterations > maxIterations) {
+          throw new Error(
+            `Exceeded maximum iterations (${maxIterations}) in while loop. Possible infinite loop.`
+          );
         }
-        return [
-          firstPoint, 
-          tempMovedFirstPoint, 
-          tempMovedLastPoint,
-          lastPoint
-        ];
       }
+
+      tempMovedLastPoint = {
+        x: tempMovedLastPoint.x - (0.5 * shiftDirection.shiftX),
+        y: tempMovedLastPoint.y - (0.5 * shiftDirection.shiftY),
+      };
+
+      const centerRightParts = splitLeftPolygonIntoTwo(leftAndCenterConcaves[1], tempMovedLastPoint)
+
+      console.log('各種値', concavePoints, leftAndCenterConcaves, centerRightParts, tempMovedLastPoint);
+
+      return {
+        shift: shiftDirection, 
+        leftPart: leftAndCenterConcaves[0], 
+        centerPart: centerRightParts[0], 
+        rightPart: centerRightParts[1]
+      }
+
     } else {
-      // 入口非平行型
-      const movedFirstPoint: Point = { x: firstPoint.x, y: firstPoint.y };
-      const movedLastPoint: Point = { x: lastPoint.x, y: lastPoint.y };
-
-
-      if (firstShiftX == 0) {
-        movedLastPoint.y = firstPoint.y;
-      } else {
-        movedLastPoint.x = firstPoint.x;
+      return {
+        shift: shiftDirection, 
+        leftPart: leftAndCenterConcaves[0], 
+        centerPart: leftAndCenterConcaves[1], 
+        rightPart: [{x: 0, y: 0}]
       }
-
-      let intersectionFound = false;
-      let tempMovedFirstPoint = { ...movedFirstPoint };
-      let tempMovedLastPoint = { ...movedLastPoint };
-
-      let iterationCount = 0;
-      while (!intersectionFound) {
-        iterationCount++;
-
-        if (iterationCount > maxIterations) {
-          console.error('エラー: （非平行型）反復回数が多すぎます。');
-          break;
-        }
-
-        for (let i = 0; i < concavePoints.length; i++) {
-          const start = concavePoints[i];
-          const end = concavePoints[(i + 1) % concavePoints.length];
-
-          if (areLineSegmentsOverlapping(tempMovedLastPoint, tempMovedFirstPoint, start, end)) {
-            intersectionFound = true;
-            break;
-          }
-        }
-
-        // 交差が見つかっていない場合は、ポイントを更新
-        if (!intersectionFound) {
-          tempMovedFirstPoint = {
-            x: tempMovedFirstPoint.x + firstShiftX,
-            y: tempMovedFirstPoint.y + firstShiftY,
-          };
-          tempMovedLastPoint = {
-            x: tempMovedLastPoint.x + firstShiftX,
-            y: tempMovedLastPoint.y + firstShiftY,
-          };
-        }
-      }
-      return [
-        movedFirstPoint, 
-        tempMovedFirstPoint, 
-        tempMovedLastPoint,
-        movedLastPoint
-      ];
     }
+  }
+
+  //　左右のパーツからNextConcavewの３パーツを計算する関数
+  const getNextThreeParts = (sidePart: Point[], shiftDirection: Shift): ThreeParts[] => {
+    const isShiftX = Math.abs(shiftDirection.shiftX) < epsilon;
+  
+    const standardValue = isShiftX ? sidePart[0].x : sidePart[0].y;
+  
+    const getCoordinate = (point: Point) => (isShiftX ? point.x : point.y);
+  
+    const indices = sidePart
+      .map((point, index) => (Math.abs(getCoordinate(point) - standardValue) < epsilon ? index : -1))
+      .filter((index) => index !== -1); // 無効な値 (-1) を除外
+  
+    const nonConsecutivePairs: [number, number][] = [];
+    for (let i = 0; i < indices.length - 1; i++) {
+      if (indices[i + 1] !== indices[i] + 1) {
+        nonConsecutivePairs.push([indices[i], indices[i + 1]]);
+      }
+    }
+  
+    const extractedPoints: Point[][] = nonConsecutivePairs.map(
+      ([start, end]) => sidePart.slice(start, end + 1) // 範囲で抜き出し
+    );
+  
+    return extractedPoints.map((pointSet) => concaveToThreeParts(pointSet));
   };
-
-  // 入口が広がっている非平行型に対する、凹みの分割関数。
-  function concaveSegmentation(concavePoints: Point[], shiftX: number, shiftY: number): [Point[], Point[]] {
-
-    let movingPoint = { ...concavePoints[0] };
-    movingPoint.x += shiftX;
-    movingPoint.y += shiftY;
-    
-    let iterationCount = 0;
-
-    while (true) {
-
-      iterationCount++;
-      if (iterationCount > maxIterations) {
-        console.error('エラー: （平行型）反復回数が多すぎます。');
-        break;
-      }
-
-      for (let i = 0; i < concavePoints.length; i++) {
-        const start = concavePoints[i];
-        const end = concavePoints[(i + 1) % concavePoints.length]; // 多角形の最後の辺も考慮
-  
-        if (isPointOnLineSegment(movingPoint, start, end)) {
-
-          // 該当する辺上に movingPoint を挿入
-          const insertIndex = (i + 1) % concavePoints.length;
-          const newPoints = [...concavePoints];
-          newPoints.splice(insertIndex, 0, movingPoint);
-  
-          // movingPoint で集合を分割
-          const firstPart = newPoints.slice(0, insertIndex + 1);
-          const secondPart = newPoints.slice(insertIndex);
-
-          const crossPoint1 = {x: concavePoints[0].x, y: concavePoints[concavePoints.length - 1].y};
-          const crossPoint2 = {x: concavePoints[concavePoints.length - 1].x, y: concavePoints[0].y};
-
-          const conectedFirstPart = removeConsecutiveDuplicatePoints(firstPart);
-          const conectedSecondPart = removeConsecutiveDuplicatePoints(secondPart);
-
-          const crossPoint = selectValidPoint(crossPoint1, crossPoint2, concavePoints);
-
-          const concaveDirection = getVectorDirection(conectedFirstPart[0], conectedFirstPart[1])
-
-          if (concaveDirection[0] === shiftX) {
-            conectedFirstPart.push(crossPoint)
-          } else {
-            conectedSecondPart.unshift(crossPoint)
-          }
-          return [conectedFirstPart, conectedSecondPart];
-        }
-  
-      }
-      // movingPoint をシフト
-      movingPoint.x += shiftX;
-      movingPoint.y += shiftY;
-    }
-  }
-
-  // concaveSegmentationを各集合に適用する関数。
-  // 点の集合の集合に対して、concaveSegmentationが必要な集合を見つけ、concaveSegmentationを適用する。
-  function processConcave(beforeConcaves: Point[][], shiftX: number, shiftY:number): Point[][] {
-    const afterConcaves: Point[][] = [];
-    beforeConcaves.forEach((concave) => {
-      const firstPoint = concave[0];
-      const nextPoint = concave[1];
-      const lastPoint = concave[concave.length - 1];
-      console.log('type', getTypeOfConcave(firstPoint, lastPoint, nextPoint));
-
-      if (firstPoint.x !== lastPoint.x && firstPoint.y !== lastPoint.y && getTypeOfConcave(firstPoint, lastPoint, nextPoint)) {
-        
-        const [newConcave1, newConcave2] = concaveSegmentation(concave, shiftX, shiftY);
-        afterConcaves.push(newConcave1, newConcave2);
-      } else {
-        afterConcaves.push(concave);
-      }
-    })
-
-    return afterConcaves;
-  }
-
-  // 凹部分の分割関数
-  // 内接長方形をもとに1つの凹み部分を複数の凹み部分に分割
-  function splitConcaveShape(concave: Point[], rectangle: Point[]): Point[][] {
-    const result: Point[][] = [];
-    let currentSet: Point[] | null = null;
-
-    const firstPoint = concave[0];
-    const adjacentFirstPoint = concave[1];
-    let shiftX = 0;
-    let shiftY = 0;
-
-    // 進行方向の計算
-    if (firstPoint.y === adjacentFirstPoint.y)
-      shiftX = firstPoint.x < adjacentFirstPoint.x ? scale : -1 * scale;
-    else shiftY = firstPoint.y < adjacentFirstPoint.y ? scale : -1 * scale;
-
-    for (let i = 0; i < concave.length - 1; i++) {
-      let start = concave[i];
-      let end = concave[i + 1];
-
-      const startOnEdge = isPointPartialPolygon(start, rectangle);
-      const endOnEdge = isPointPartialPolygon(end, rectangle);
-
-      if (startOnEdge && !endOnEdge) {
-        currentSet = [];
-        result.push(currentSet);
-        if (isPointOnLineSegment(rectangle[1], start, end) && !isPointOnEndpoints(rectangle[1], start, end)) {
-          start = rectangle[1];
-        }
-        if (isPointOnLineSegment(rectangle[2], start, end) && !isPointOnEndpoints(rectangle[2], start, end)) {
-          start = rectangle[2];
-        }
-        currentSet.push(start);
-        currentSet.push(end);
-
-      } else if (!startOnEdge && endOnEdge) {
-        if (isPointOnLineSegment(rectangle[1], start, end) && !isPointOnEndpoints(rectangle[1], start, end)) {
-          end = rectangle[1];
-        }
-        if (isPointOnLineSegment(rectangle[2], start, end) && !isPointOnEndpoints(rectangle[2], start, end)) {
-          end = rectangle[2];
-        }
-        if (currentSet) {
-          currentSet.push(start);
-          currentSet.push(end);
-        }
-
-      } else if (!startOnEdge && !endOnEdge) {
-        if (!currentSet) {
-          currentSet = [];
-          result.push(currentSet);
-        }
-        if (currentSet) {
-          if (
-            isPointOnLineSegment(rectangle[1], start, end) &&
-            !isPointOnEndpoints(rectangle[1], start, end) &&
-            isPointOnLineSegment(rectangle[2], start, end) &&
-            !isPointOnEndpoints(rectangle[2], start, end)
-          ) {
-            const nearFarPoints = getNearestAndFarthestPoint(start, rectangle[1], rectangle[2]);
-            currentSet.push(start);
-            currentSet.push(nearFarPoints.near);
-            currentSet = [];
-            result.push(currentSet);
-            currentSet.push(nearFarPoints.far);
-            currentSet.push(end);
-          } else {
-            currentSet.push(start);
-            currentSet.push(end);
-          }
-        }
-      } else {
-        // 両方とも辺上に存在する場合、currentSetをnullにする
-        currentSet = null;
-      }
-    }
-
-    // 各集合内で隣接する点をつなぐ（重複を避ける）
-    const conectedlResult: Point[][] = result.map((set) => {
-      const simplifiedSet: Point[] = [];
-      for (let i = 0; i < set.length; i++) {
-        const point = set[i];
-        if (i === 0 || point.x !== set[i - 1].x || point.y !== set[i - 1].y) {
-          simplifiedSet.push(point);
-        }
-      }
-      return simplifiedSet;
-    });
-
-    // 入口非平行型に対して、凹みを２分割する。
-    const finalResult = processConcave(conectedlResult, shiftX, shiftY);
-
-    return finalResult;
-  }
-
-  // 再帰的に内接長方形を構築
-  function buildTreeNodeRecursive(points: Point[]): TreeNode {
-    // 点の集合が4点以下の場合、再帰を終了
-    if (points.length <= 4) {
-      const rectangle = computeInnerRectangle(points);
-      return { rectangle, children: [] };
-    }
-
-    // 内接長方形を計算
-    const rectangle = computeInnerRectangle(points);
-
-    // 凹形状を分割
-    const dividedSets = splitConcaveShape(points, rectangle);
-
-    // 各分割された集合に対して再帰的に処理を行う
-    const children = dividedSets.map((subset) => buildTreeNodeRecursive(subset));
-
-    // 親ノードに長方形の頂点を格納
-    return { rectangle, children };
-  }
-
-  // （メイン関数２）各凹部分に対してbuildTreeNodeRectangleを実装する
-  function buildTreeFromPointSets(pointSets: Point[][]): TreeNode[] {
-    return pointSets.map((points) => buildTreeNodeRecursive(points));
-  }
 
   const onCompute = () => {
     const canvas = canvasRef.current;
@@ -682,11 +452,18 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: con
       const context = canvas.getContext('2d');
       if (context) {
 
-        const concaveParts = getConcaveParts(concavePoints);
-        const innerRectangles = buildTreeFromPointSets(concaveParts);
+        const counterClockwisePoitns = ensureCounterClockwise(polygonPoints);
+
+        const processedPolygonPoints = processPoints(counterClockwisePoitns);
+
+        const concaveParts = getConcaveParts(processedPolygonPoints);
+        const threeParts = concaveToThreeParts(concaveParts[0]);
+        //const nextThreeParts = getNextThreeParts(threeParts.rightPart, threeParts.shift);
 
         console.log('凹み部分', concaveParts);
-        console.log('内接長方形のツリー', innerRectangles)
+        console.log('前処理1', processedPolygonPoints);
+        console.log('3分割', threeParts);
+        //console.log('次の凹み', nextThreeParts)
 
         setIsComputed(true);
       }
