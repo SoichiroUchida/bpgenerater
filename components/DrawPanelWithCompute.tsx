@@ -1,7 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ComputeButton from './ComputeButton';
-import { promises } from 'dns';
-import { SearchParamsContext } from 'next/dist/shared/lib/hooks-client-context.shared-runtime';
 
 interface DrawPanelWithComputeProps {
   points: { x: number; y: number }[];
@@ -286,7 +284,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
   };
 
   // ある１点でポリゴンを２分割する関数
-  // rightPart専用
+  // LeftPart専用
   function splitLeftPolygonIntoTwo(polygonVertices: Point[], point: Point): [Point[], Point[]] {
     const n = polygonVertices.length;
   
@@ -368,7 +366,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
       y: tempMovedFirstPoint.y - (0.5 * shiftDirection.shiftY),
     };
 
-    const leftAndCenterConcaves = splitRightPolygonIntoTwo(concavePoints, tempMovedFirstPoint)
+    const leftAndCenterConcaves = splitLeftPolygonIntoTwo(concavePoints, tempMovedFirstPoint)
 
     if(
         Math.abs(concavePoints[0].x - concavePoints[concavePoints.length - 1].x) < epsilon 
@@ -399,7 +397,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         y: tempMovedLastPoint.y - (0.5 * shiftDirection.shiftY),
       };
 
-      const centerRightParts = splitLeftPolygonIntoTwo(leftAndCenterConcaves[1], tempMovedLastPoint)
+      const centerRightParts = splitRightPolygonIntoTwo(leftAndCenterConcaves[1], tempMovedLastPoint)
 
       console.log('各種値', concavePoints, leftAndCenterConcaves, centerRightParts, tempMovedLastPoint);
 
@@ -421,7 +419,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
   }
 
   //　左右のパーツからNextConcavewの３パーツを計算する関数
-  const getNextThreeParts = (sidePart: Point[], shiftDirection: Shift): ThreeParts[] => {
+  const getNextThreePartsFromSide = (sidePart: Point[], shiftDirection: Shift): ThreeParts[] => {
     const isShiftX = Math.abs(shiftDirection.shiftX) < epsilon;
   
     const standardValue = isShiftX ? sidePart[0].x : sidePart[0].y;
@@ -442,6 +440,8 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     const extractedPoints: Point[][] = nonConsecutivePairs.map(
       ([start, end]) => sidePart.slice(start, end + 1) // 範囲で抜き出し
     );
+
+    console.log('a', standardValue, indices, nonConsecutivePairs)
   
     return extractedPoints.map((pointSet) => concaveToThreeParts(pointSet));
   };
@@ -458,12 +458,12 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
 
         const concaveParts = getConcaveParts(processedPolygonPoints);
         const threeParts = concaveToThreeParts(concaveParts[0]);
-        //const nextThreeParts = getNextThreeParts(threeParts.rightPart, threeParts.shift);
+        const nextThreeParts = getNextThreePartsFromSide(threeParts.leftPart, threeParts.shift);
 
         console.log('凹み部分', concaveParts);
         console.log('前処理1', processedPolygonPoints);
         console.log('3分割', threeParts);
-        //console.log('次の凹み', nextThreeParts)
+        console.log('次の凹み', nextThreeParts)
 
         setIsComputed(true);
       }
