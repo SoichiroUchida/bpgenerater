@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ComputeButton from './ComputeButton';
+import { promises } from 'dns';
 
 interface DrawPanelWithComputeProps {
   points: { x: number; y: number }[];
@@ -8,11 +9,6 @@ interface DrawPanelWithComputeProps {
 interface Point {
   x: number;
   y: number;
-}
-
-interface TreeNode {
-  rectangle: Point[];
-  children: TreeNode[];
 }
 
 interface Shift {
@@ -25,6 +21,26 @@ interface ThreeParts {
   leftPart: Point[];
   centerPart: Point[];
   rightPart: Point[];
+}
+
+interface OrthogonalLine {
+  direction: string; // x or y
+  coordinateOfStandardPoint: Point;
+}
+
+interface LineSegment {
+  start: Point;
+  end: Point;
+}
+
+interface DividingLength {
+  line: LineSegment;
+  leftDividingLength: number;
+  rightDividingLength: number;
+  topDividingLength: number;
+  bottomDividingLength: number;
+  horizontalDividingLength: number;
+  verticalDividingLength: number;
 }
 
 const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: polygonPoints }) => {
@@ -181,6 +197,15 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
 
   //　巻き数法による、ある１点が多角形の内部に存在するかの判定。
   function isPointInsidePolygon(point: Point, polygon: Point[]): boolean {
+    for (let i = 0; i < polygon.length; i++) {
+      const start = polygon[i];
+      const end = polygon[(i + 1) % polygon.length];
+  
+      // 点が辺上にある場合は内部ではないと判定
+      if (isPointOnLineSegment(point, start, end)) {
+        return false;
+      }
+    }
     let windingNumber = 0;
   
     for (let i = 0; i < polygon.length; i++) {
@@ -245,7 +270,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     return rotatedPoints;
   }
 
-  // 凹み部分を計算する
+  // (メイン関数１）凹み部分を計算する
   const getConcaveParts = (polygon: Point[]): Point[][] => {
     const boundingRectangle = computeBoundingRectangle(polygon);
 
@@ -312,7 +337,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     return [firstPolygon, secondPolygon];
   }
   
-
   // ある１点でポリゴンを２分割する関数
   // rightPart専用
   function splitRightPolygonIntoTwo(polygonVertices: Point[], point: Point): [Point[], Point[]] {
@@ -340,7 +364,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
   
     return [firstPolygon, secondPolygon];
   }
-  
 
   // １つの凹みから３パーツを計算する関数。
   const concaveToThreeParts = (concavePoints: Point[]): ThreeParts => {
@@ -399,8 +422,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
 
       const centerRightParts = splitRightPolygonIntoTwo(leftAndCenterConcaves[1], tempMovedLastPoint)
 
-      console.log('各種値', concavePoints, leftAndCenterConcaves, centerRightParts, tempMovedLastPoint);
-
       return {
         shift: shiftDirection, 
         leftPart: leftAndCenterConcaves[0], 
@@ -420,11 +441,11 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
 
   //　左右のパーツからNextConcavewの３パーツを計算する関数
   const getNextThreePartsFromSide = (sidePart: Point[], shiftDirection: Shift): ThreeParts[] => {
-    const isShiftX = Math.abs(shiftDirection.shiftX) < epsilon;
+    const isShiftXZero = Math.abs(shiftDirection.shiftX) < epsilon;
   
-    const standardValue = isShiftX ? sidePart[0].x : sidePart[0].y;
+    const standardValue = isShiftXZero ? sidePart[0].x : sidePart[0].y;
   
-    const getCoordinate = (point: Point) => (isShiftX ? point.x : point.y);
+    const getCoordinate = (point: Point) => (isShiftXZero ? point.x : point.y);
   
     const indices = sidePart
       .map((point, index) => (Math.abs(getCoordinate(point) - standardValue) < epsilon ? index : -1))
@@ -440,11 +461,382 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     const extractedPoints: Point[][] = nonConsecutivePairs.map(
       ([start, end]) => sidePart.slice(start, end + 1) // 範囲で抜き出し
     );
-
-    console.log('a', standardValue, indices, nonConsecutivePairs)
   
     return extractedPoints.map((pointSet) => concaveToThreeParts(pointSet));
   };
+
+  //　中央のパーツからNextConcaveの３パーツを計算する関数
+  const getNextThreePartsFromCenter = (centerPart: Point[], shiftDirection: Shift): ThreeParts[] => {
+    let standardValue = 0;
+    const centerPartMiniMax = getMinMaxXY(centerPart);
+  
+    // centerPart をコピーして安全に操作
+    const updatedCenterPart = [...centerPart];
+  
+    if (Math.abs(shiftDirection.shiftY) < epsilon) {
+      if (shiftDirection.shiftX > 0) {
+        standardValue = centerPartMiniMax.minX;
+      } else {
+        standardValue = centerPartMiniMax.maxX;
+      }
+  
+      if (updatedCenterPart.length > 0 && Math.abs(updatedCenterPart[0].x - standardValue) > epsilon) {
+        const additionalFirstPoint: Point = { x: standardValue, y: updatedCenterPart[0].y };
+        updatedCenterPart.unshift(additionalFirstPoint);
+      }
+      if (
+        updatedCenterPart.length > 0 &&
+        Math.abs(updatedCenterPart[updatedCenterPart.length - 1].x - standardValue) > epsilon
+      ) {
+        const additionalLastPoint: Point = {
+          x: standardValue,
+          y: updatedCenterPart[updatedCenterPart.length - 1].y,
+        };
+        updatedCenterPart.push(additionalLastPoint);
+      }
+    } else {
+      if (shiftDirection.shiftY > 0) {
+        standardValue = centerPartMiniMax.minY;
+      } else {
+        standardValue = centerPartMiniMax.maxY;
+      }
+  
+      if (updatedCenterPart.length > 0 && Math.abs(updatedCenterPart[0].y - standardValue) > epsilon) {
+        const additionalFirstPoint: Point = { x: updatedCenterPart[0].x, y: standardValue };
+        updatedCenterPart.unshift(additionalFirstPoint);
+      }
+      if (
+        updatedCenterPart.length > 0 &&
+        Math.abs(updatedCenterPart[updatedCenterPart.length - 1].y - standardValue) > epsilon
+      ) {
+        const additionalLastPoint: Point = {
+          x: updatedCenterPart[updatedCenterPart.length - 1].x,
+          y: standardValue,
+        };
+        updatedCenterPart.push(additionalLastPoint);
+      }
+    }
+
+    const newShift: Shift = {
+      shiftX: shiftDirection.shiftY,
+      shiftY: shiftDirection.shiftX
+    }
+    const nextCenterPart: ThreeParts[] = getNextThreePartsFromSide(updatedCenterPart, newShift)
+  
+    return nextCenterPart;
+  };
+  
+  // （メイン関数２）凹みの集合に対して、すべての3パーツを計算する方法
+  function processConcaves(concaves: Point[][]): ThreeParts[] {
+    // 出力のThreeParts[]を初期化
+    const threePartsGroup: ThreeParts[] = [];
+  
+    // 操作1: 入力値の各要素にconcaveToThreePartsを適用
+    const threes: ThreeParts[] = concaves.map(concaveToThreeParts);
+    threePartsGroup.push(...threes);
+  
+    // 操作2および操作3を再帰的に実行
+    function processThreeParts(threes: ThreeParts[]): void {
+      const newParts: ThreeParts[] = [];
+  
+      threes.forEach((three) => {
+        // leftPart の処理
+        if (three.leftPart.length >= 3) {
+          const nextParts = getNextThreePartsFromSide(three.leftPart, three.shift);
+          newParts.push(...nextParts);
+          threePartsGroup.push(...nextParts);
+        }
+  
+        // rightPart の処理
+        if (three.rightPart.length >= 3) {
+          const nextParts = getNextThreePartsFromSide(three.rightPart, three.shift);
+          newParts.push(...nextParts);
+          threePartsGroup.push(...nextParts);
+        }
+  
+        // centerPart の処理
+        if (three.centerPart.length >= 3) {
+          const nextParts = getNextThreePartsFromCenter(three.centerPart, three.shift);
+          newParts.push(...nextParts);
+          threePartsGroup.push(...nextParts);
+        }
+      });
+  
+      // 新たに生成された ThreeParts の中で要素数が3以上のものがあれば再帰的に処理
+      if (newParts.some(
+        (part) =>
+          part.leftPart.length >= 3 ||
+          part.rightPart.length >= 3 ||
+          part.centerPart.length >= 3
+      )) {
+        processThreeParts(newParts);
+      }
+    }
+  
+    // 初期の threes に対して操作2と操作3を実行
+    processThreeParts(threes);
+  
+    return threePartsGroup;
+  }
+
+  // 線分の向きを、左上から右下の向きに整える関数。
+  function compareAndReorder(point1: Point, point2: Point): [Point, Point] {
+    // 条件: 上かつ左の順序
+    if (
+      point1.y > point2.y || // y座標で上にある場合
+      (point1.y === point2.y && point1.x < point2.x) // y座標が同じ場合はx座標で左
+    ) {
+      return [point1, point2];
+    } else {
+      return [point2, point1];
+    }
+  }
+
+  // 多角形の頂点と直線上の2点を受け取り、 直線のうち多角形の内部にある部分の両端座標を列挙する関数
+  function getLineSegmentsInsidePolygon(
+    polygonVertices: Point[],
+    linePoint1: Point,
+    linePoint2: Point
+  ): LineSegment[] {
+    const intersections: Point[] = [];
+    const isHorizontalLine = linePoint1.y === linePoint2.y;
+    const isVerticalLine = linePoint1.x === linePoint2.x;
+  
+    if (!isHorizontalLine && !isVerticalLine) {
+      throw new Error("The input line must be parallel or perpendicular to the x-axis.");
+    }
+  
+    const n = polygonVertices.length;
+  
+    // 多角形の辺と直線の交点を記録
+    for (let i = 0; i < n; i++) {
+      const start = polygonVertices[i];
+      const end = polygonVertices[(i + 1) % n];
+  
+      const isPolygonEdgeHorizontal = start.y === end.y;
+      const isPolygonEdgeVertical = start.x === end.x;
+  
+      if (!isPolygonEdgeHorizontal && !isPolygonEdgeVertical) {
+        throw new Error("Polygon edges must be parallel or perpendicular to the x-axis.");
+      }
+  
+      let intersection: Point | null = null;
+  
+      if (isHorizontalLine && isPolygonEdgeVertical) {
+        // 直線が水平で辺が垂直
+        if (
+          Math.min(start.y, end.y) <= linePoint1.y &&
+          linePoint1.y <= Math.max(start.y, end.y)
+        ) {
+          intersection = { x: start.x, y: linePoint1.y };
+        }
+      } else if (isVerticalLine && isPolygonEdgeHorizontal) {
+        // 直線が垂直で辺が水平
+        if (
+          Math.min(start.x, end.x) <= linePoint1.x &&
+          linePoint1.x <= Math.max(start.x, end.x)
+        ) {
+          intersection = { x: linePoint1.x, y: start.y };
+        }
+      } else if (
+        (isHorizontalLine && isPolygonEdgeHorizontal) ||
+        (isVerticalLine && isPolygonEdgeVertical)
+      ) {
+        // 直線と辺が平行
+        if (
+          (isHorizontalLine && linePoint1.y === start.y) ||
+          (isVerticalLine && linePoint1.x === start.x)
+        ) {
+          intersections.push(start); // 辺の始点
+          intersections.push(end); // 辺の終点
+        }
+      }
+  
+      if (intersection) {
+        intersections.push(intersection);
+      }
+    }
+  
+    // 連続する同じ点を削除
+    const uniqueIntersections = intersections.filter(
+      (point, index, array) =>
+        index === 0 || !(point.x === array[index - 1].x && point.y === array[index - 1].y)
+    );
+  
+    // x座標が小さい順に並べ替え。同じx座標ならy座標が小さい順
+    uniqueIntersections.sort((a, b) => {
+      if (a.x === b.x) {
+        return a.y - b.y; // xが同じならyの小さい順
+      }
+      return a.x - b.x; // xの小さい順
+    });
+  
+    console.log("Sorted unique intersections:", uniqueIntersections);
+  
+    // 交点を使ってセグメントを記録
+    const segments: LineSegment[] = [];
+    for (let i = 0; i < uniqueIntersections.length - 1; i++) {
+      const p1 = uniqueIntersections[i];
+      const p2 = uniqueIntersections[i + 1];
+  
+      // 条件: セグメントのどちらかの端点近傍に多角形内部の点が存在する
+      const midPoint: Point = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+      if (isPointInsidePolygon(midPoint, polygonVertices)) {
+        console.log("Midpoint inside polygon:", midPoint);
+        segments.push({ start: p1, end: p2 });
+      } else {
+        console.log("Midpoint not inside polygon:", midPoint);
+      }
+    }
+  
+    return segments;
+  }
+  
+  // 折れ線の長さを計算する関数。
+  function calculatePolylineLength(points: Point[]): number {
+    if (points.length < 2) {
+      // 点が1つ以下の場合、折れ線を作れないので長さは0
+      return 0;
+    }
+
+    let totalLength = 0;
+
+    for (let i = 0; i < points.length - 1; i++) {
+      const dx = points[i + 1].x - points[i].x;
+      const dy = points[i + 1].y - points[i].y;
+      totalLength += Math.sqrt(dx * dx + dy * dy);
+    }
+
+    return totalLength;
+  }
+
+  // ３パーツから局所的な離し方を計算する関数
+  const getLocalDividingLength = (
+    threeParts: ThreeParts,
+    polygon: Point[]
+  ): DividingLength[] => {
+    const lengthFromLeft = calculatePolylineLength(threeParts.leftPart);
+    const lengthFromRight = calculatePolylineLength(threeParts.rightPart);
+    let leftDividingLength = 0;
+    let rightDividingLength = 0;
+    let topDividingLength = 0;
+    let bottomDividingLength = 0;
+    const shift = threeParts.shift;
+  
+    if (shift.shiftX > 0) {
+      topDividingLength = lengthFromLeft;
+      bottomDividingLength = lengthFromRight;
+    } else if (shift.shiftX < 0) {
+      topDividingLength = lengthFromRight;
+      bottomDividingLength = lengthFromLeft;
+    } else if (shift.shiftY > 0) {
+      leftDividingLength = lengthFromLeft;
+      rightDividingLength = lengthFromRight;
+    } else {
+      leftDividingLength = lengthFromRight;
+      rightDividingLength = lengthFromLeft;
+    }
+  
+    const lineSegmentsFromLeft = getLineSegmentsInsidePolygon(
+      polygon,
+      threeParts.leftPart[0],
+      threeParts.leftPart[threeParts.leftPart.length - 1]
+    );
+    const lineSegmentsFromRight = getLineSegmentsInsidePolygon(
+      polygon,
+      threeParts.rightPart[0],
+      threeParts.rightPart[threeParts.rightPart.length - 1]
+    );
+  
+    const results: DividingLength[] = [];
+  
+    if (lengthFromLeft > 0) {
+      for (const Xi of lineSegmentsFromLeft) {
+        const isMatchingEndPoint =
+          Xi.end.x === threeParts.leftPart[threeParts.leftPart.length - 1].x &&
+          Xi.end.y === threeParts.leftPart[threeParts.leftPart.length - 1].y;
+  
+        if (isMatchingEndPoint) {
+          results.push({
+            line: Xi,
+            leftDividingLength: leftDividingLength,
+            rightDividingLength: rightDividingLength,
+            topDividingLength: topDividingLength,
+            bottomDividingLength: bottomDividingLength,
+            horizontalDividingLength: 0,
+            verticalDividingLength: 0,
+          });
+        } else {
+          results.push({
+            line: Xi,
+            leftDividingLength: 0,
+            rightDividingLength: 0,
+            topDividingLength: 0,
+            bottomDividingLength: 0,
+            horizontalDividingLength: Math.max(
+              leftDividingLength,
+              rightDividingLength
+            ),
+            verticalDividingLength: Math.max(
+              topDividingLength,
+              bottomDividingLength
+            ),
+          });
+        }
+      }
+    }
+  
+    if (lengthFromRight > 0) {
+      for (const Xi of lineSegmentsFromRight) {
+        const isMatchingStartPoint =
+          Xi.start.x === threeParts.rightPart[0].x &&
+          Xi.start.y === threeParts.rightPart[0].y;
+  
+        if (isMatchingStartPoint) {
+          results.push({
+            line: Xi,
+            leftDividingLength: leftDividingLength,
+            rightDividingLength: rightDividingLength,
+            topDividingLength: topDividingLength,
+            bottomDividingLength: bottomDividingLength,
+            horizontalDividingLength: 0,
+            verticalDividingLength: 0,
+          });
+        } else {
+          results.push({
+            line: Xi,
+            leftDividingLength: 0,
+            rightDividingLength: 0,
+            topDividingLength: 0,
+            bottomDividingLength: 0,
+            horizontalDividingLength: Math.max(
+              leftDividingLength,
+              rightDividingLength
+            ),
+            verticalDividingLength: Math.max(
+              topDividingLength,
+              bottomDividingLength
+            ),
+          });
+        }
+      }
+    }
+
+    console.log('途中経過', )
+  
+    return results;
+  };
+
+  // 局所的な離し方を統合して、大域的な離し方を計算する関数。
+  const getGlobalDividingLength = (localDividingLength: DividingLength): DividingLength => {
+    return
+  }
+
+  // 局所的な離し方からひだの衝突を計算する関数
+  const getCollisionOfFolds = (globalDividingLength: DividingLength): OrthogonalLine => {
+    return
+  }
+  
 
   const onCompute = () => {
     const canvas = canvasRef.current;
@@ -453,17 +845,20 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
       if (context) {
 
         const counterClockwisePoitns = ensureCounterClockwise(polygonPoints);
-
         const processedPolygonPoints = processPoints(counterClockwisePoitns);
-
         const concaveParts = getConcaveParts(processedPolygonPoints);
-        const threeParts = concaveToThreeParts(concaveParts[0]);
-        const nextThreeParts = getNextThreePartsFromSide(threeParts.leftPart, threeParts.shift);
+        const allThreeParts = processConcaves(concaveParts);
+        const divide = getLocalDividingLength(allThreeParts[0], polygonPoints)
+        const firstTreeParts = allThreeParts[0]
+        const point1 = firstTreeParts.leftPart[0]
+        const point2 = firstTreeParts.leftPart[firstTreeParts.leftPart.length - 1]
+        const line = getLineSegmentsInsidePolygon(polygonPoints, point1, point2)
 
-        console.log('凹み部分', concaveParts);
         console.log('前処理1', processedPolygonPoints);
-        console.log('3分割', threeParts);
-        console.log('次の凹み', nextThreeParts)
+        console.log('凹み部分', concaveParts);
+        console.log('all three parts', allThreeParts)
+        console.log('最初の離し方', divide)
+        console.log('セグメント',firstTreeParts, polygonPoints, point1, point2, line)
 
         setIsComputed(true);
       }
