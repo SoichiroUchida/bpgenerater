@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import ComputeButton from './ComputeButton';
 import { promises } from 'dns';
+import { getDefaultSettings } from 'http2';
 
 interface DrawPanelWithComputeProps {
   points: { x: number; y: number }[];
@@ -24,8 +25,8 @@ interface ThreeParts {
 }
 
 interface OrthogonalLine {
-  direction: string; // x or y
-  coordinateOfStandardPoint: Point;
+ direction: string; // x or y
+ number: number;
 }
 
 interface LineSegment {
@@ -34,6 +35,12 @@ interface LineSegment {
 }
 
 interface DividingLength {
+  leftDivide: number,
+  rightDivide: number
+}
+
+interface DividingLengthPerSegments {
+  originalPart: Point[]
   line: LineSegment;
   leftDividingLength: number;
   rightDividingLength: number;
@@ -43,6 +50,25 @@ interface DividingLength {
   verticalDividingLength: number;
 }
 
+
+interface DividingLengthPerLines {
+  line: OrthogonalLine;
+  length: number;
+}
+
+interface AdditionalLengthPerThreePart {
+  line: OrthogonalLine;
+  leftDividingLength: number;
+  rightDividingLength: number;
+  topDividingLength: number;
+  bottomDividingLength: number;
+}
+
+interface CreasePattern {
+  mountainfold: LineSegment[];
+  valleyfold: LineSegment[];
+}
+
 const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: polygonPoints }) => {
   const [isComputed, setIsComputed] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -50,11 +76,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
   const epsilon = 1e-10;
   let maxIterations = 20;
 
-  interface Point {
-    x: number;
-    y: number;
-  }
-  
   // 多角形の頂点が反時計回りかを判定する関数。
   function isClockwise(points: Point[]): boolean {
     let sum = 0;
@@ -80,6 +101,24 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
   return {shiftX, shiftY}
 
   }
+
+  // 多角形全体をx座標、y座標にくっつける関数
+  const normalizePoints = (points: Point[]): Point[] => {
+    if (points.length === 0) return [];
+  
+    // x座標とy座標の最小値を求める
+    const minX = Math.min(...points.map(point => point.x));
+    const minY = Math.min(...points.map(point => point.y));
+  
+    // 各点からminX, minYを引いて新しい点を作成
+    const normalizedPoints = points.map(point => ({
+      x: point.x - minX,
+      y: point.y - minY,
+    }));
+  
+    return normalizedPoints;
+  };
+  
   
   //　連続する同じ点を解消する関数
   function removeConsecutiveDuplicates(points: Point[]): Point[] {
@@ -167,32 +206,44 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     return true;
   }
 
-  // 点pが線分p_1→p_2の左側に存在するか判定する関数。
+  function isSegmentOnLineSegment(segment: LineSegment, line: OrthogonalLine): boolean {
+    const isHorizontal = line.direction === "x";
+    const isVertical = line.direction === "y";
+  
+    if (isHorizontal) {
+      return (
+        segment.start.y === line.number &&
+        segment.end.y === line.number &&
+        segment.start.x <= line.number &&
+        segment.end.x >= line.number
+      );
+    }
+  
+    if (isVertical) {
+      return (
+        segment.start.x === line.number &&
+        segment.end.x === line.number &&
+        segment.start.y <= line.number &&
+        segment.end.y >= line.number
+      );
+    }
+  
+    return false;
+  }
+
+  function isPointOnPolyline(point: Point, polyline: Point[]): boolean {
+    for (let i = 0; i < polyline.length - 1; i++) {
+      if (isPointOnLineSegment(point, polyline[i], polyline[i + 1])) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // 点pが線分p_0→p_1の左側に存在するか判定する関数。
   // 正なら左側、０なら直線上、負なら右側に存在。
   function isLeft(p: Point, p0: Point, p1: Point): number {
     return (p1.x - p0.x) * (p.y - p0.y) - (p.x - p0.x) * (p1.y - p0.y);
-  }
-
-  // 隣接する同じ点を削除する関数
-  function removeConsecutiveDuplicatePoints(points: Point[]): Point[] {
-    if (points.length === 0) return [];
-
-    const result: Point[] = [points[0]];
-
-    for (let i = 1; i < points.length; i++) {
-      const prevPoint = points[i - 1];
-      const currentPoint = points[i];
-
-      const isSamePoint =
-        Math.abs(prevPoint.x - currentPoint.x) < epsilon &&
-        Math.abs(prevPoint.y - currentPoint.y) < epsilon;
-
-      if (!isSamePoint) {
-        result.push(currentPoint);
-      }
-    }
-
-    return result;
   }
 
   //　巻き数法による、ある１点が多角形の内部に存在するかの判定。
@@ -248,7 +299,18 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
 
   // 入力値の前処理
   function processPoints(points: Point[]): Point[] {
-    const newPoints = points.slice(0, -1);
+    if (points.length === 0) {
+      return [];
+    }
+  
+    // 1. 反時計回りにソート
+    const counterClockwisePoints = ensureCounterClockwise(points);
+  
+    // 2. 座標を正規化
+    const normalizedPoints = normalizePoints(counterClockwisePoints);
+  
+    // 3. 現在の processPoints の処理を適用
+    const newPoints = normalizedPoints.slice(0, -1);
   
     if (newPoints.length === 0) {
       return [];
@@ -264,12 +326,12 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     const index = newPoints.findIndex(
       point => point.x === maxPoint.x && point.y === maxPoint.y
     );
-
+  
     const rotatedPoints = newPoints.slice(index).concat(newPoints.slice(0, index));
   
     return rotatedPoints;
   }
-
+  
   // (メイン関数１）凹み部分を計算する
   const getConcaveParts = (polygon: Point[]): Point[][] => {
     const boundingRectangle = computeBoundingRectangle(polygon);
@@ -551,7 +613,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     threePartsGroup.push(...threes);
   
     // 操作2および操作3を再帰的に実行
-    function processThreeParts(threes: ThreeParts[]): void {
+    function generateAllSubThreeParts(threes: ThreeParts[]): void {
       const newParts: ThreeParts[] = [];
   
       threes.forEach((three) => {
@@ -584,12 +646,12 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
           part.rightPart.length >= 3 ||
           part.centerPart.length >= 3
       )) {
-        processThreeParts(newParts);
+        generateAllSubThreeParts(newParts);
       }
     }
   
     // 初期の threes に対して操作2と操作3を実行
-    processThreeParts(threes);
+    generateAllSubThreeParts(threes);
   
     return threePartsGroup;
   }
@@ -707,16 +769,86 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     return totalLength;
   }
 
-  // ３パーツから局所的な離し方を計算する関数
+  // 3パーツから、左右の離し方を計算する関数
+  const calculateDividingLengths = (threePart: ThreeParts): DividingLength => {
+    // 左パートと右パートの長さを計算
+    const leftPolylineLength = calculatePolylineLength(threePart.leftPart);
+    const rightPolylineLength = calculatePolylineLength(threePart.rightPart);
+  
+    // 左パートのカウント数を計算
+    const calculateGapForBend = (part: Point[], shift: Shift, isLeftPart: boolean): number => {
+      if (!Array.isArray(part) || part.length < 2) {
+        return 0;
+      }
+    
+      let count = 0;
+    
+      // 1. 各点を頭から3つずつ取り出してチェック
+      if (part.length > 2) {
+        for (let i = 0; i < part.length - 2; i++) {
+          const pi = part[i];
+          const pi1 = part[i + 1];
+          const pi2 = part[i + 2];
+    
+          if (pi && pi1 && pi2 && isLeft(pi2, pi, pi1) < 0) {
+            count++;
+          }
+        }
+      }
+    
+      // 2. 端点のベクトルが `shift` と平行かどうかを判定
+      const isParallel = (vec1: Point, vec2: Shift): boolean => {
+        return vec1.x * vec2.shiftY === vec1.y * vec2.shiftX;
+      };
+    
+      if (isLeftPart && part.length >= 2) {
+        const lastVec: Point = {
+          x: (part[part.length - 1]?.x || 0) - (part[part.length - 2]?.x || 0),
+          y: (part[part.length - 1]?.y || 0) - (part[part.length - 2]?.y || 0),
+        };
+        if (isParallel(lastVec, shift)) {
+          count++;
+        }
+      } else if (!isLeftPart && part.length >= 2) {
+        const firstVec: Point = {
+          x: (part[1]?.x || 0) - (part[0]?.x || 0),
+          y: (part[1]?.y || 0) - (part[0]?.y || 0),
+        };
+        if (isParallel(firstVec, shift)) {
+          count++;
+        }
+      }
+    
+      return count * scale; // スケールを掛けた結果を返す
+    };
+    
+  
+    // 左パートと右パートのギャップ計算
+    const leftGapForBend = calculateGapForBend(threePart.leftPart, threePart.shift, true);
+    const rightGapForBend = calculateGapForBend(threePart.rightPart, threePart.shift, false);
+  
+    // leftDivide と rightDivide の計算
+    const leftDivide = leftPolylineLength + leftGapForBend;
+    const rightDivide = rightPolylineLength + rightGapForBend;
+  
+    // DividingLength オブジェクトを返す
+    return {
+      leftDivide,
+      rightDivide,
+    };
+  };
+  
+  // １つの３パーツから導かれる離し方をセグメントに格納する関数
   const threePartsToDividingLength = (
     threeParts: ThreeParts,
     polygon: Point[]
-  ): DividingLength[] => {
+  ): DividingLengthPerSegments[] => {
     // Calculate lengths
-    const lengthFromLeft = calculatePolylineLength(threeParts.leftPart);
-    const lengthFromRight = calculatePolylineLength(threeParts.rightPart);
-  
-    const calculateDividingLengths = (
+    const dividingLenght = calculateDividingLengths(threeParts)
+    const lengthFromLeft = dividingLenght.leftDivide
+    const lengthFromRight = dividingLenght.rightDivide
+
+    const storeNumbersInSegments = (
       part: Point[],
       length: number,
       shift: Shift,
@@ -747,187 +879,2061 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         part[part.length - 1]
       );
   
-      const results: DividingLength[] = [];
+      const results: DividingLengthPerSegments[] = [];
       for (const segment of lineSegments) {
+        // isMatchingPointは、線分セグメントがパーツと接触しているかを判定する変数。
         const isMatchingPoint = isLeft
           ? (segment.start.x === part[1].x && segment.start.y === part[1].y) || (segment.end.x === part[1].x && segment.end.y === part[1].y)
           : (segment.start.x === part[part.length - 2].x && segment.start.y === part[part.length - 2].y) || (segment.end.x === part[part.length - 2].x && segment.end.y === part[part.length - 2].y);
   
         results.push({
+          originalPart: part,
           line: segment,
           leftDividingLength: isMatchingPoint ? leftDividingLength : 0,
           rightDividingLength: isMatchingPoint ? rightDividingLength : 0,
           topDividingLength: isMatchingPoint ? topDividingLength : 0,
           bottomDividingLength: isMatchingPoint ? bottomDividingLength : 0,
-          horizontalDividingLength: isMatchingPoint
-            ? 0
-            : Math.max(leftDividingLength, rightDividingLength),
-          verticalDividingLength: isMatchingPoint
-            ? 0
-            : Math.max(topDividingLength, bottomDividingLength),
+          horizontalDividingLength: Math.max(leftDividingLength, rightDividingLength),
+          verticalDividingLength:　Math.max(topDividingLength, bottomDividingLength),
         });
       }
       return results;
     };
   
     const leftResults = lengthFromLeft > 0
-      ? calculateDividingLengths(threeParts.leftPart, lengthFromLeft, threeParts.shift, true)
+      ? storeNumbersInSegments(threeParts.leftPart, lengthFromLeft, threeParts.shift, true)
       : [];
     const rightResults = lengthFromRight > 0
-      ? calculateDividingLengths(threeParts.rightPart, lengthFromRight, threeParts.shift, false)
+      ? storeNumbersInSegments(threeParts.rightPart, lengthFromRight, threeParts.shift, false)
       : [];
   
     return [...leftResults, ...rightResults];
   };
 
+  //　すべてのパーツの離し方を計算する
   const getLocalDividingLength = (
     threePartsArray: ThreeParts[],
     polygon: Point[]
-  ): DividingLength[] => {
+  ): DividingLengthPerSegments[] => {
     // 入力値の各要素に対して threePartsToDividingLength を適用し、すべての結果をまとめる
-    const results: DividingLength[] = threePartsArray.flatMap((threeParts) =>
+    const results: DividingLengthPerSegments[] = threePartsArray.flatMap((threeParts) =>
       threePartsToDividingLength(threeParts, polygon)
     );
   
     return results;
   };
-  
-  // 局所的な離し方を統合して、大域的な離し方を計算する関数。
-  const getGlobalDividingLength = (localDividingLength: DividingLength[]): DividingLength[] => {
-    // グループ化処理：line が等しいものをグループ化
-    const grouped = localDividingLength.reduce((acc, current) => {
+
+  // ローカルの不都合な結合の回避のための前処理
+  const processLocalDividingLength = (
+    dividingLengthPerSegments: DividingLengthPerSegments[]
+  ): DividingLengthPerSegments[] => {
+    // グループ分け：line が同じもの同士でグループ化
+    const grouped = dividingLengthPerSegments.reduce((acc, current) => {
       const key = JSON.stringify(current.line); // LineSegment をキーとしてグループ化
       if (!acc[key]) {
         acc[key] = [];
       }
       acc[key].push(current);
       return acc;
-    }, {} as Record<string, DividingLength[]>);
+    }, {} as Record<string, DividingLengthPerSegments[]>);
   
-    // グループごとに統合処理
-    const results: DividingLength[] = Object.values(grouped).map((group) => {
-      // グループ内の最大値を取得
-      const maxLength = Math.max(
-        ...group.map((d) =>
-          Math.max(
-            d.leftDividingLength,
-            d.rightDividingLength,
-            d.topDividingLength,
-            d.bottomDividingLength,
-            d.horizontalDividingLength,
-            d.verticalDividingLength
-          )
-        )
-      );
+    // グループごとの統合処理
+    const results: DividingLengthPerSegments[] = [];
   
-      let length = maxLength;
-      let leftDividingLength = 0;
-      let rightDividingLength = 0;
-      let topDividingLength = 0;
-      let bottomDividingLength = 0;
-      let horizontalDividingLength = 0;
-      let verticalDividingLength = 0;
+    for (const group of Object.values(grouped)) {
+      let mergedGroup = [...group]; // 作業用コピー
   
-      // グループ内での計算処理
-      for (const d of group) {
-        // 1. 最大値を取得
-        if (d.leftDividingLength === maxLength) leftDividingLength = maxLength;
-        if (d.rightDividingLength === maxLength) rightDividingLength = maxLength;
-        if (d.topDividingLength === maxLength) topDividingLength = maxLength;
-        if (d.bottomDividingLength === maxLength) bottomDividingLength = maxLength;
+      // グループ内で条件を満たす組を探して統合
+      let hasMerged = true;
+      while (hasMerged) {
+        hasMerged = false;
   
-        // 2. 全てが 0 の場合
-        if (
-          d.leftDividingLength === 0 &&
-          d.rightDividingLength === 0 &&
-          d.topDividingLength === 0 &&
-          d.bottomDividingLength === 0
-        ) {
-          if (d.horizontalDividingLength !== 0) {
-            horizontalDividingLength = Math.max(horizontalDividingLength, d.horizontalDividingLength);
+        for (let i = 0; i < mergedGroup.length; i++) {
+          for (let j = i + 1; j < mergedGroup.length; j++) {
+            const part1 = mergedGroup[i];
+            const part2 = mergedGroup[j];
+  
+            // originalPart の端点が一致するかを判定
+            const endpointsMatch =
+              (part1.originalPart[0].x === part2.originalPart[0].x &&
+                part1.originalPart[0].y === part2.originalPart[0].y) ||
+              (part1.originalPart[0].x === part2.originalPart[part2.originalPart.length - 1].x &&
+                part1.originalPart[0].y === part2.originalPart[part2.originalPart.length - 1].y) ||
+              (part1.originalPart[part1.originalPart.length - 1].x === part2.originalPart[0].x &&
+                part1.originalPart[part1.originalPart.length - 1].y === part2.originalPart[0].y) ||
+              (part1.originalPart[part1.originalPart.length - 1].x === part2.originalPart[part2.originalPart.length - 1].x &&
+                part1.originalPart[part1.originalPart.length - 1].y === part2.originalPart[part2.originalPart.length - 1].y);
+  
+            if (endpointsMatch) {
+              // 組を統合
+              const merged: DividingLengthPerSegments = {
+                originalPart: [...part1.originalPart, ...part2.originalPart], // 結合した originalPart
+                line: part1.line, // 同じ line を共有
+                leftDividingLength: part1.leftDividingLength + part2.leftDividingLength,
+                rightDividingLength: part1.rightDividingLength + part2.rightDividingLength,
+                topDividingLength: part1.topDividingLength + part2.topDividingLength,
+                bottomDividingLength: part1.bottomDividingLength + part2.bottomDividingLength,
+                horizontalDividingLength: part1.horizontalDividingLength + part2.horizontalDividingLength,
+                verticalDividingLength: part1.verticalDividingLength + part2.verticalDividingLength,
+              };
+  
+              // 統合結果で置き換え、統合済みフラグを立てる
+              mergedGroup.splice(j, 1); // j を削除
+              mergedGroup.splice(i, 1, merged); // i を置き換え
+              hasMerged = true;
+              break;
+            }
           }
-          if (d.verticalDividingLength !== 0) {
-            verticalDividingLength = Math.max(verticalDividingLength, d.verticalDividingLength);
-          }
-        }
-  
-        // 3. 左右の片方が 0 の場合
-        if (d.leftDividingLength === 0 && d.rightDividingLength !== 0) {
-          rightDividingLength = Math.max(rightDividingLength, d.rightDividingLength);
-        }
-        if (d.rightDividingLength === 0 && d.leftDividingLength !== 0) {
-          leftDividingLength = Math.max(leftDividingLength, d.leftDividingLength);
-        }
-  
-        // 4. 左右両方が 0 でない場合
-        if (d.leftDividingLength !== 0 && d.rightDividingLength !== 0) {
-          leftDividingLength = 0;
-          rightDividingLength = 0;
-          horizontalDividingLength = Math.max(horizontalDividingLength, d.horizontalDividingLength);
-        }
-  
-        // 5. 上下の片方が 0 の場合
-        if (d.topDividingLength === 0 && d.bottomDividingLength !== 0) {
-          bottomDividingLength = Math.max(bottomDividingLength, d.bottomDividingLength);
-        }
-        if (d.bottomDividingLength === 0 && d.topDividingLength !== 0) {
-          topDividingLength = Math.max(topDividingLength, d.topDividingLength);
-        }
-  
-        // 6. 上下両方が 0 でない場合
-        if (d.topDividingLength !== 0 && d.bottomDividingLength !== 0) {
-          topDividingLength = 0;
-          bottomDividingLength = 0;
-          verticalDividingLength = Math.max(verticalDividingLength, d.verticalDividingLength);
+          if (hasMerged) break;
         }
       }
   
-      // グループを統合した結果を返す
-      return {
-        line: group[0].line, // 同じグループ内は同じ line
-        leftDividingLength,
-        rightDividingLength,
-        topDividingLength,
-        bottomDividingLength,
-        horizontalDividingLength,
-        verticalDividingLength,
-      };
-    });
+      // グループが統合された結果を追加
+      results.push(...mergedGroup);
+    }
   
     return results;
   };
   
+  // 局所的な離し方を統合して、大域的な離し方を計算する関数。
+  const getGlobalDividingLength = (
+    processLocalDividingLength: DividingLengthPerSegments[]
+  ): DividingLengthPerSegments[] => {
+    // グループ化関数
+    const groupBy = <T, K>(array: T[], getKey: (item: T) => K): Map<K, T[]> => {
+      return array.reduce((map, item) => {
+        const key = getKey(item);
+        if (!map.has(key)) {
+          map.set(key, []);
+        }
+        map.get(key)!.push(item);
+        return map;
+      }, new Map<K, T[]>());
+    };
+  
+    // 1. lineが同一直線上に存在するものでグループ化
+    const lineGroups = groupBy(processLocalDividingLength, (segment) =>
+      JSON.stringify({
+        startSlope: segment.line.start.x === segment.line.end.x
+          ? Infinity
+          : (segment.line.end.y - segment.line.start.y) /
+            (segment.line.end.x - segment.line.start.x),
+        intercept: segment.line.start.x === segment.line.end.x
+          ? segment.line.start.x
+          : segment.line.start.y -
+            (segment.line.end.y - segment.line.start.y) /
+              (segment.line.end.x - segment.line.start.x) *
+              segment.line.start.x,
+      })
+    );
+  
+    // 統合結果を格納するリスト
+    const results: DividingLengthPerSegments[] = [];
+  
+    // 各グループに対する処理
+    for (const group of lineGroups.values()) {
+      // グループ内の horizontalDividingLength と verticalDividingLength の最大値を取得
+      const maxHorizontal = Math.max(
+        ...group.map((d) => d.horizontalDividingLength)
+      );
+      const maxVertical = Math.max(
+        ...group.map((d) => d.verticalDividingLength)
+      );
+  
+      // 2. lineが完全に一致するものでさらにグループ化
+      const exactLineGroups = groupBy(group, (segment) =>
+        JSON.stringify(segment.line)
+      );
+  
+      for (const exactGroup of exactLineGroups.values()) {
+        // グループ内の left, right, top, bottom の最大値を取得
+        const maxLeft = Math.max(
+          ...exactGroup.map((d) => d.leftDividingLength)
+        );
+        const maxRight = Math.max(
+          ...exactGroup.map((d) => d.rightDividingLength)
+        );
+        const maxTop = Math.max(
+          ...exactGroup.map((d) => d.topDividingLength)
+        );
+        const maxBottom = Math.max(
+          ...exactGroup.map((d) => d.bottomDividingLength)
+        );
+  
+        // グループ内の代表値を選択
+        const representativeSegment = exactGroup[0];
+  
+        // 統合結果を作成
+        results.push({
+          originalPart: representativeSegment.originalPart, // 代表値
+          line: representativeSegment.line, // 同一グループのlineはすべて同じ
+          leftDividingLength: maxLeft,
+          rightDividingLength: maxRight,
+          topDividingLength: maxTop,
+          bottomDividingLength: maxBottom,
+          horizontalDividingLength: maxHorizontal,
+          verticalDividingLength: maxVertical,
+        });
+      }
+    }
+  
+    return results;
+  };
 
-  // 局所的な離し方からひだの衝突を計算する関数
-  const getCollisionOfFolds = (globalDividingLength: DividingLength): OrthogonalLine => {
-    return
+  // セグメントごとの大域的離し方を直線ごとに変換する関数
+  const convertToGlobalDividingLengthPerLines = (
+    segments: DividingLengthPerSegments[]
+  ): DividingLengthPerLines[] => {
+    const groupedByLine = new Map<string, { orthogonalLine: OrthogonalLine; maxLength: number }>();
+  
+    segments.forEach(segment => {
+      const isHorizontal = segment.line.start.y === segment.line.end.y;
+      const isVertical = segment.line.start.x === segment.line.end.x;
+  
+      if (!isHorizontal && !isVertical) {
+        throw new Error("Segments must be either horizontal or vertical.");
+      }
+  
+      const orthogonalLine: OrthogonalLine = isHorizontal
+        ? { direction: "y", number: segment.line.start.y }
+        : { direction: "x", number: segment.line.start.x };
+  
+      const key = `${orthogonalLine.direction}=${orthogonalLine.number}`;
+  
+      // 最大値を計算
+      const segmentMaxLength = Math.max(
+        segment.leftDividingLength,
+        segment.rightDividingLength,
+        segment.topDividingLength,
+        segment.bottomDividingLength,
+        segment.horizontalDividingLength,
+        segment.verticalDividingLength
+      );
+  
+      if (!groupedByLine.has(key)) {
+        groupedByLine.set(key, { orthogonalLine, maxLength: segmentMaxLength });
+      } else {
+        const group = groupedByLine.get(key)!;
+        group.maxLength = Math.max(group.maxLength, segmentMaxLength);
+      }
+    });
+  
+    return Array.from(groupedByLine.values())
+      .map(group => ({
+        line: group.orthogonalLine,
+        length: group.maxLength, 
+      }))
+      .sort((a, b) => {
+        if (a.line.direction === "x" && b.line.direction === "y") return -1;
+        if (a.line.direction === "y" && b.line.direction === "x") return 1;
+        return a.line.number - b.line.number;
+      });
+  };
+
+  // Centerから派生したThreeParts を取得する関数
+  function getNextThreePartOnlyCenter(threePart: ThreeParts[]): ThreeParts[] {
+    const threePartsGroup: ThreeParts[] = [...threePart];
+
+    function nextThreePartsFromCenter(threes: ThreeParts[]): void {
+      const newParts: ThreeParts[] = [];
+
+      threes.forEach((three) => {
+        if (three.centerPart.length >= 3) {
+          const nextParts = getNextThreePartsFromCenter(three.centerPart, three.shift);
+          newParts.push(...nextParts);
+          threePartsGroup.push(...nextParts);
+        }
+      });
+
+      if (
+        newParts.some(
+          (part) =>
+            part.leftPart.length >= 3 ||
+            part.rightPart.length >= 3 ||
+            part.centerPart.length >= 3
+        )
+      ) {
+        nextThreePartsFromCenter(newParts);
+      }
+    }
+
+    nextThreePartsFromCenter(threePart);
+    return threePartsGroup;
   }
   
+  //１つのThreePartに対して、左右の追加Diveideを計算する方法。
+  const additionalLRDividePerThreePart = (threePart: ThreeParts, globalDividePerLine: DividingLengthPerLines[], polygon:Point[]): AdditionalLengthPerThreePart[] => {
+    const threeParts = [threePart]
+
+    function getAdditionalThreePart(threePart: ThreeParts[]): ThreeParts[] {
+      // 出力のThreeParts[]を初期化
+      const threePartsGroup: ThreeParts[] = [];
+    
+      // 操作1: 入力値の各要素にconcaveToThreePartsを適用
+      const threes: ThreeParts[] = threePart
+      threePartsGroup.push(...threes);
+    
+      // 操作2および操作3を再帰的に実行
+      function processThreePartsFromCenter(threes: ThreeParts[]): void {
+        const newParts: ThreeParts[] = [];
+    
+        threes.forEach((three) => {
+
+          // centerPart の処理
+          if (three.centerPart.length >= 3) {
+            const nextParts = getNextThreePartsFromCenter(three.centerPart, three.shift);
+            newParts.push(...nextParts);
+            threePartsGroup.push(...nextParts);
+          }
+        });
+    
+        // 新たに生成された ThreeParts の中で要素数が3以上のものがあれば再帰的に処理
+        if (newParts.some(
+          (part) =>
+            part.leftPart.length >= 3 ||
+            part.rightPart.length >= 3 ||
+            part.centerPart.length >= 3
+        )) {
+          processThreePartsFromCenter(newParts);
+        }
+      }
+    
+      // 初期の threes に対して操作2と操作3を実行
+      processThreePartsFromCenter(threes);
+    
+      return threePartsGroup;
+    }
+
+    const threePartOnlyCenter = getAdditionalThreePart(threeParts);
+    const uniqueDivide = getLocalDividingLength(threePartOnlyCenter, polygon)
+    const processedUniqueDivide = processLocalDividingLength(uniqueDivide)
+    const uniquwGlobalDividingLengthPerSegments = getGlobalDividingLength(processedUniqueDivide)
+    const uniqueGlobalDividingLengthPerLine = convertToGlobalDividingLengthPerLines(uniquwGlobalDividingLengthPerSegments)
+
+    const calculateLRAdditionalLength = (
+      globalDivide: DividingLengthPerLines[],
+      additionalGlobalDivide: DividingLengthPerLines[],
+      threeParts: ThreeParts
+    ): AdditionalLengthPerThreePart[] => {
+      const result: AdditionalLengthPerThreePart[] = [];
+    
+      if (threeParts.shift.shiftX > 0) {
+        const centerPartLength = threeParts.centerPart.length;
+        const leftPartLength = threeParts.leftPart.length;
+        const rightPartLength = threeParts.rightPart.length;
+    
+        // centerPartの要素数が1以下
+        if (centerPartLength <= 1) {
+          // leftPartまたはrightPartの要素数が1以下のときは何もしない
+          if (leftPartLength <= 1 || rightPartLength <= 1) {
+            return [];
+          }
+    
+          // leftPartとrightPartの要素数がともに2以上のとき
+          if (leftPartLength >= 2 && rightPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "y",
+              number: threeParts.leftPart[0].y,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: 0,
+                  rightDividingLength: 0,
+                  topDividingLength: 0,
+                  bottomDividingLength: lengthDifference,
+                });
+              }
+            }
+          }
+        }
+    
+        // centerPartの要素数が2以上
+        if (centerPartLength >= 2) {
+          // leftPartの要素数が2以上の場合
+          if (leftPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "y",
+              number: threeParts.leftPart[0].y,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: 0,
+                  rightDividingLength: 0,
+                  topDividingLength: lengthDifference,
+                  bottomDividingLength: 0,
+                });
+              }
+            }
+          }
+    
+          // rightPartの要素数が2以上の場合
+          if (rightPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "y",
+              number: threeParts.rightPart[0].y,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: 0,
+                  rightDividingLength: 0,
+                  topDividingLength: 0,
+                  bottomDividingLength: lengthDifference,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      if (threeParts.shift.shiftX < 0) {
+        const centerPartLength = threeParts.centerPart.length;
+        const leftPartLength = threeParts.leftPart.length;
+        const rightPartLength = threeParts.rightPart.length;
+    
+        // centerPartの要素数が1以下
+        if (centerPartLength <= 1) {
+          // leftPartまたはrightPartの要素数が1以下のときは何もしない
+          if (leftPartLength <= 1 || rightPartLength <= 1) {
+            return [];
+          }
+    
+          // leftPartとrightPartの要素数がともに2以上のとき
+          if (leftPartLength >= 2 && rightPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "y",
+              number: threeParts.leftPart[0].y,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: 0,
+                  rightDividingLength: 0,
+                  topDividingLength: 0,
+                  bottomDividingLength: lengthDifference,
+                });
+              }
+            }
+          }
+        }
+    
+        // centerPartの要素数が2以上
+        if (centerPartLength >= 2) {
+          // leftPartの要素数が2以上の場合
+          if (leftPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "y",
+              number: threeParts.leftPart[0].y,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: 0,
+                  rightDividingLength: 0,
+                  topDividingLength: 0,
+                  bottomDividingLength: lengthDifference,
+                });
+              }
+            }
+          }
+    
+          // rightPartの要素数が2以上の場合
+          if (rightPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "y",
+              number: threeParts.rightPart[0].y,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "y" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: 0,
+                  rightDividingLength: 0,
+                  topDividingLength: lengthDifference,
+                  bottomDividingLength: 0,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      if (threeParts.shift.shiftY > 0) {
+        const centerPartLength = threeParts.centerPart.length;
+        const leftPartLength = threeParts.leftPart.length;
+        const rightPartLength = threeParts.rightPart.length;
+    
+        // centerPartの要素数が1以下
+        if (centerPartLength <= 1) {
+          // leftPartまたはrightPartの要素数が1以下のときは何もしない
+          if (leftPartLength <= 1 || rightPartLength <= 1) {
+            return [];
+          }
+    
+          // leftPartとrightPartの要素数がともに2以上のとき
+          if (leftPartLength >= 2 && rightPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "x",
+              number: threeParts.leftPart[0].x,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: lengthDifference,
+                  rightDividingLength: 0,
+                  topDividingLength: 0,
+                  bottomDividingLength: 0,
+                });
+              }
+            }
+          }
+        }
+    
+        // centerPartの要素数が2以上
+        if (centerPartLength >= 2) {
+          // leftPartの要素数が2以上の場合
+          if (leftPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "x",
+              number: threeParts.leftPart[0].x,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: lengthDifference,
+                  rightDividingLength: 0,
+                  topDividingLength: 0,
+                  bottomDividingLength: 0,
+                });
+              }
+            }
+          }
+    
+          // rightPartの要素数が2以上の場合
+          if (rightPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "x",
+              number: threeParts.rightPart[0].x,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: 0,
+                  rightDividingLength: lengthDifference,
+                  topDividingLength: 0,
+                  bottomDividingLength: 0,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      if (threeParts.shift.shiftY < 0) {
+        const centerPartLength = threeParts.centerPart.length;
+        const leftPartLength = threeParts.leftPart.length;
+        const rightPartLength = threeParts.rightPart.length;
+    
+        // centerPartの要素数が1以下
+        if (centerPartLength <= 1) {
+          // leftPartまたはrightPartの要素数が1以下のときは何もしない
+          if (leftPartLength <= 1 || rightPartLength <= 1) {
+            return [];
+          }
+    
+          // leftPartとrightPartの要素数がともに2以上のとき
+          if (leftPartLength >= 2 && rightPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "x",
+              number: threeParts.leftPart[0].x,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: lengthDifference,
+                  rightDividingLength: 0,
+                  topDividingLength: 0,
+                  bottomDividingLength: 0,
+                });
+              }
+            }
+          }
+        }
+    
+        // centerPartの要素数が2以上
+        if (centerPartLength >= 2) {
+          // leftPartの要素数が2以上の場合
+          if (leftPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "x",
+              number: threeParts.leftPart[0].x,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: 0,
+                  rightDividingLength: lengthDifference,
+                  topDividingLength: 0,
+                  bottomDividingLength: 0,
+                });
+              }
+            }
+          }
+    
+          // rightPartの要素数が2以上の場合
+          if (rightPartLength >= 2) {
+            const line: OrthogonalLine = {
+              direction: "x",
+              number: threeParts.rightPart[0].x,
+            };
+    
+            const line1 = globalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+            const line2 = additionalGlobalDivide.find((d) => d.line.direction === "x" && d.line.number === line.number);
+    
+            if (line1 && line2) {
+              const lengthDifference = line1.length - line2.length;
+              if (lengthDifference > 0) {
+                result.push({
+                  line,
+                  leftDividingLength: lengthDifference,
+                  rightDividingLength: 0,
+                  topDividingLength: 0,
+                  bottomDividingLength: 0,
+                });
+              }
+            }
+          }
+        }
+      }
+    
+      return result;
+    };
+    
+    return calculateLRAdditionalLength(globalDividePerLine, uniqueGlobalDividingLengthPerLine, threePart)
+  }
+
+  // ThreePartの入口に対する追加Divideを計算する。
+  const additionalDividingPerThreePart = (
+    threePart: ThreeParts,
+    globalDividePerLine: DividingLengthPerLines[],
+    globalDividePerSegments: DividingLengthPerSegments[],
+    polygon: Point[]
+  ): AdditionalLengthPerThreePart[] => {
+
+    // 入力値を配列に変換
+    const threePartsArray = [threePart];
+  
+    // additional ThreeParts を取得する関数
+  
+    const additionalThreeParts = getNextThreePartOnlyCenter(threePartsArray);
+
+    // すべての ThreeParts に `additionalLRDividePerThreePart` を適用
+    const result1 = additionalThreeParts.flatMap(threePart => {
+      const additionalParts = additionalLRDividePerThreePart(threePart, globalDividePerLine, polygon);
+    
+      // フィルタリング: 不要な成分を除外
+      const filteredParts = additionalParts.filter(part => {
+        const isValid =
+          part && // `part` が null または undefined ではない
+          Object.keys(part).length > 0 && // 空オブジェクトではない
+          part.line && // `line` プロパティが存在する
+          typeof part.line.direction === "string" && // `line.direction` が文字列である
+          typeof part.line.number === "number" && // `line.number` が数値である
+          Object.values(part).some(value => value > 0); // 少なくとも1つの分割長が正の値
+    
+        if (!isValid) {
+          console.warn("Filtered out invalid part:", part);
+        }
+        return isValid;
+      });
+    
+      return filteredParts;
+    });
+    
+    // 最終結果の要素数をログ出力
+  
+    const additionalLocalDivide = getLocalDividingLength(additionalThreeParts, polygon);
+
+    function convertSegmentsToAdditionalLengths(
+      additionalLocalDivide: DividingLengthPerSegments[],
+      globalDividePerSegments: DividingLengthPerSegments[],
+      threePart: ThreeParts
+    ): AdditionalLengthPerThreePart[] {
+      const result: AdditionalLengthPerThreePart[] = [];
+    
+      // ポリライン上の点を判定するヘルパー関数
+      const isPointOnPolyline = (point: Point, polyline: Point[]): boolean => {
+        for (let i = 0; i < polyline.length - 1; i++) {
+          const start = polyline[i];
+          const end = polyline[i + 1];
+          if (
+            (point.x - start.x) * (end.y - start.y) === (point.y - start.y) * (end.x - start.x) &&
+            Math.min(start.x, end.x) <= point.x &&
+            point.x <= Math.max(start.x, end.x) &&
+            Math.min(start.y, end.y) <= point.y &&
+            point.y <= Math.max(start.y, end.y)
+          ) {
+            return true;
+          }
+        }
+        return false;
+      };
+    
+      // additionalLocalDivide から方向を取得（すべて平行）
+      const additionalDirections = new Set(
+        additionalLocalDivide.map((segment) =>
+          segment.line.start.x === segment.line.end.x ? "x" : "y"
+        )
+      );
+    
+      // globalDividePerSegments を一つずつ確認
+      for (const globalSegment of globalDividePerSegments) {
+        const { line } = globalSegment;
+    
+        // 条件1: globalSegment.line の端点のいずれかが threePart.centerPart がなすポリライン上に存在する
+        const isStartOnCenterPolyline = isPointOnPolyline(line.start, threePart.centerPart);
+        const isEndOnCenterPolyline = isPointOnPolyline(line.end, threePart.centerPart);
+    
+        if (!(isStartOnCenterPolyline || isEndOnCenterPolyline)) {
+          continue;
+        }
+    
+        // 条件2: 端点が additionalLocalDivide.line のどの直線上にも存在しない
+        const isStartOnAnyLocalLine = additionalLocalDivide.some((localSegment) => {
+          const direction = localSegment.line.start.x === localSegment.line.end.x ? "x" : "y";
+          if (direction === "x") {
+            return (
+              localSegment.line.start.x === line.start.x ||
+              localSegment.line.start.x === line.end.x
+            );
+          } else {
+            return (
+              localSegment.line.start.y === line.start.y ||
+              localSegment.line.start.y === line.end.y
+            );
+          }
+        });
+    
+        const isEndOnAnyLocalLine = additionalLocalDivide.some((localSegment) => {
+          const direction = localSegment.line.start.x === localSegment.line.end.x ? "x" : "y";
+          if (direction === "x") {
+            return (
+              localSegment.line.start.x === line.start.x ||
+              localSegment.line.start.x === line.end.x
+            );
+          } else {
+            return (
+              localSegment.line.start.y === line.start.y ||
+              localSegment.line.start.y === line.end.y
+            );
+          }
+        });
+    
+        if (isStartOnAnyLocalLine || isEndOnAnyLocalLine) {
+          continue;
+        }
+    
+        // 条件3: globalSegment.line が additionalLocalDivide.line と平行である
+        const direction = line.start.x === line.end.x ? "x" : "y";
+        if (!additionalDirections.has(direction)) {
+          continue;
+        }
+    
+        // 条件を満たす場合、DividingLengthPerSegments を AdditionalLengthPerThreePart に変換
+        const additionalPart: AdditionalLengthPerThreePart = {
+          line: {
+            direction,
+            number: direction === "x" ? line.start.x : line.start.y,
+          },
+          leftDividingLength: globalSegment.leftDividingLength || 0,
+          rightDividingLength: globalSegment.rightDividingLength || 0,
+          topDividingLength: globalSegment.topDividingLength || 0,
+          bottomDividingLength: globalSegment.bottomDividingLength || 0,
+        };
+    
+        // 空のデータを防ぐために検証
+        if (
+          additionalPart.line &&
+          typeof additionalPart.line.direction === "string" &&
+          typeof additionalPart.line.number === "number" &&
+          Object.values(additionalPart).some((value) => value > 0)
+        ) {
+          result.push(additionalPart);
+        }
+      }
+    
+      return result;
+    }
+    
+
+    const result2 = convertSegmentsToAdditionalLengths(additionalLocalDivide, globalDividePerSegments, threePart);
+
+    function mergeAndSortAdditionalLengths(
+      arr1: AdditionalLengthPerThreePart[],
+      arr2: AdditionalLengthPerThreePart[]
+    ): AdditionalLengthPerThreePart[] {
+      // 配列を統合
+      const mergedArray = [...arr1, ...arr2];
+    
+      // ソート処理
+      mergedArray.sort((a, b) => {
+        // 最優先: line.direction が "x" のものが前に来る
+        if (a.line.direction === "x" && b.line.direction !== "x") {
+          return -1; // a を前に
+        }
+        if (a.line.direction !== "x" && b.line.direction === "x") {
+          return 1; // b を前に
+        }
+    
+        // 次に優先: line.number が小さいものが前に来る
+        return a.line.number - b.line.number;
+      });
+    
+      return mergedArray;
+    }
+
+    const result = mergeAndSortAdditionalLengths(result1, result2);
+    
+    
+    return result;
+  };
+
+  function mergeCreasePatterns(patterns: (CreasePattern | undefined | null)[]): CreasePattern {
+    return patterns.reduce(
+      (merged, current) => {
+        // current が null または undefined の場合はスキップ
+        if (!current) return merged;
+  
+        // mountainfold と valleyfold を結合
+        return {
+          mountainfold: [...merged.mountainfold, ...current.mountainfold],
+          valleyfold: [...merged.valleyfold, ...current.valleyfold],
+        };
+      },
+      { mountainfold: [], valleyfold: [] } // 初期値
+    );
+  }
+
+
+  function generateAdditionalLengths(
+    threePart: ThreeParts,
+    globalDividePerSegments: DividingLengthPerSegments[],
+  ): AdditionalLengthPerThreePart[][] {
+    const leftAdd: AdditionalLengthPerThreePart[] = [];
+    const rightAdd: AdditionalLengthPerThreePart[] = [];
+  
+    // ヘルパー関数: 直線が多角形と交差しているか判定
+    function isLineSegmentIntersectingPolygon(line: LineSegment, polygon: Point[]): boolean {
+      const n = polygon.length;
+  
+      for (let i = 0; i < n; i++) {
+        const polygonEdge: LineSegment = {
+          start: polygon[i],
+          end: polygon[(i + 1) % n],
+        };
+  
+        if (doLineSegmentsIntersect(line, polygonEdge)) {
+          return true;
+        }
+      }
+      return false;
+    }
+  
+    // ヘルパー関数: 線分の交差判定
+    function doLineSegmentsIntersect(line1: LineSegment, line2: LineSegment): boolean {
+      function orientation(p: Point, q: Point, r: Point): number {
+        const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+        if (val === 0) return 0; // colinear
+        return val > 0 ? 1 : 2; // clock or counterclockwise
+      }
+  
+      const { start: p1, end: q1 } = line1;
+      const { start: p2, end: q2 } = line2;
+  
+      const o1 = orientation(p1, q1, p2);
+      const o2 = orientation(p1, q1, q2);
+      const o3 = orientation(p2, q2, p1);
+      const o4 = orientation(p2, q2, q1);
+  
+      // General case
+      if (o1 !== o2 && o3 !== o4) return true;
+  
+      return false; // No intersection
+    }
+  
+    // ThreeParts.leftPart の処理
+    if (threePart.leftPart.length >= 2) {
+      const leftLine: LineSegment = {
+        start: threePart.leftPart[0],
+        end: threePart.leftPart[threePart.leftPart.length - 1],
+      };
+  
+      globalDividePerSegments.forEach((segment) => {
+        const isOrthogonal = segment.line.start.y === segment.line.end.y
+          ? leftLine.start.x === leftLine.end.x
+          : leftLine.start.y === leftLine.end.y;
+  
+        const isIntersecting = isLineSegmentIntersectingPolygon(segment.line, threePart.leftPart);
+  
+        const isValidIntersection =
+          isOrthogonal &&
+          isIntersecting &&
+          segment.line.start !== threePart.leftPart[0] &&
+          segment.line.end !== threePart.leftPart[threePart.leftPart.length - 1];
+  
+        if (isValidIntersection) {
+          const additionalPart: AdditionalLengthPerThreePart = {
+            line: {
+              direction: segment.line.start.x === segment.line.end.x ? "x" : "y",
+              number: segment.line.start.x === segment.line.end.x
+                ? segment.line.start.x
+                : segment.line.start.y,
+            },
+            leftDividingLength: segment.leftDividingLength,
+            rightDividingLength: segment.rightDividingLength,
+            topDividingLength: segment.topDividingLength,
+            bottomDividingLength: segment.bottomDividingLength,
+          };
+  
+          leftAdd.push(additionalPart);
+        }
+      });
+    }
+  
+    // ThreeParts.rightPart の処理
+    if (threePart.rightPart.length >= 2) {
+      const rightLine: LineSegment = {
+        start: threePart.rightPart[0],
+        end: threePart.rightPart[threePart.rightPart.length - 1],
+      };
+  
+      globalDividePerSegments.forEach((segment) => {
+        const isOrthogonal = segment.line.start.y === segment.line.end.y
+          ? rightLine.start.x === rightLine.end.x
+          : rightLine.start.y === rightLine.end.y;
+  
+        const isIntersecting = isLineSegmentIntersectingPolygon(segment.line, threePart.rightPart);
+  
+        const isValidIntersection =
+          isOrthogonal &&
+          isIntersecting &&
+          segment.line.start !== threePart.rightPart[0] &&
+          segment.line.end !== threePart.rightPart[threePart.rightPart.length - 1];
+  
+        if (isValidIntersection) {
+          const additionalPart: AdditionalLengthPerThreePart = {
+            line: {
+              direction: segment.line.start.x === segment.line.end.x ? "x" : "y",
+              number: segment.line.start.x === segment.line.end.x
+                ? segment.line.start.x
+                : segment.line.start.y,
+            },
+            leftDividingLength: segment.leftDividingLength,
+            rightDividingLength: segment.rightDividingLength,
+            topDividingLength: segment.topDividingLength,
+            bottomDividingLength: segment.bottomDividingLength,
+          };
+  
+          rightAdd.push(additionalPart);
+        }
+      });
+    }
+  
+    return [leftAdd, rightAdd];
+  }
+  
+  
+  // ThreePartの折り線の計算
+  const generateThreePartCreasePattern = (
+    threePart: ThreeParts, 
+    globalDivide: DividingLengthPerLines[],
+    globalDividePerSegments: DividingLengthPerSegments[],
+    polygon:Point[]): CreasePattern => {
+      
+    const centerLRAddition = additionalLRDividePerThreePart(threePart, globalDivide, polygon);
+    console.log("ローカル左右", threePart, centerLRAddition)
+
+    const sideAdd = generateAdditionalLengths(threePart, globalDividePerSegments)
+    console.log(sideAdd)
+
+    let centerAddFromLeft: number = 0;
+    let centerAddFromRight: number = 0;
+
+    // 戻り値が配列であるか、空でないかを確認
+    if (Array.isArray(centerLRAddition) && centerLRAddition.length > 0) {
+
+      // centerとsideの差を計算
+      function calculateCenterAdditions(
+        threePart: ThreeParts,
+        centerLRAddition: AdditionalLengthPerThreePart[]
+      ): { centerAddFromLeft: number; centerAddFromRight: number } {
+        if (threePart.shift.shiftX > 0) {
+          // shiftX > 0 の場合
+          const topElement = centerLRAddition.find((item) => item.topDividingLength > 0);
+          const bottomElement = centerLRAddition.find((item) => item.bottomDividingLength > 0);
+      
+          if (topElement) {
+            centerAddFromLeft = topElement.topDividingLength;
+          }
+      
+          if (bottomElement) {
+            centerAddFromRight = bottomElement.bottomDividingLength;
+          }
+        } else if (threePart.shift.shiftX < 0) {
+          // shiftX < 0 の場合
+          const bottomElement = centerLRAddition.find((item) => item.bottomDividingLength > 0);
+          const topElement = centerLRAddition.find((item) => item.topDividingLength > 0);
+      
+          if (bottomElement) {
+            centerAddFromLeft = bottomElement.bottomDividingLength;
+          }
+      
+          if (topElement) {
+            centerAddFromRight = topElement.topDividingLength;
+          }
+        } else if (threePart.shift.shiftY > 0) {
+          // shiftY > 0 の場合
+          const leftElement = centerLRAddition.find((item) => item.leftDividingLength > 0);
+          const rightElement = centerLRAddition.find((item) => item.rightDividingLength > 0);
+      
+          if (leftElement) {
+            centerAddFromLeft = leftElement.leftDividingLength;
+          }
+      
+          if (rightElement) {
+            centerAddFromRight = rightElement.rightDividingLength;
+          }
+        } else if (threePart.shift.shiftY < 0) {
+          // shiftY < 0 の場合
+          const rightElement = centerLRAddition.find((item) => item.rightDividingLength > 0);
+          const leftElement = centerLRAddition.find((item) => item.leftDividingLength > 0);
+      
+          if (rightElement) {
+            centerAddFromLeft = rightElement.rightDividingLength;
+          }
+      
+          if (leftElement) {
+            centerAddFromRight = leftElement.leftDividingLength;
+          }
+        }
+      
+        return { centerAddFromLeft, centerAddFromRight };
+      }
+
+      const lengthSideToCenter = calculateCenterAdditions(threePart, centerLRAddition)
+      centerAddFromLeft = lengthSideToCenter.centerAddFromLeft;
+      centerAddFromRight = lengthSideToCenter.centerAddFromRight;
+    } else {
+      // 予期しない戻り値の場合
+      centerAddFromLeft = 0;
+      centerAddFromRight = 0;
+    }
+
+    console.log("左右の追加", centerLRAddition, centerAddFromLeft,centerAddFromRight)
+
+    const getLocalDivideForAllThreePart = (
+      threeParts: ThreeParts[],
+      globalDividePerLine: DividingLengthPerLines[],
+      polygon: Point[]
+    ): AdditionalLengthPerThreePart[] => {
+      
+      const sideAdd: AdditionalLengthPerThreePart[] = threeParts.flatMap((threePart) =>
+        additionalDividingPerThreePart(threePart, globalDividePerLine, globalDividePerSegments, polygon)
+      );
+      return sideAdd;
+    };
+
+    const CP: CreasePattern[] = []
+
+    if (threePart.leftPart.length > 1) {
+      const leftThreeParts = getNextThreePartsFromSide(threePart.leftPart, threePart.shift);
+      const leftAdd = sideAdd[0]
+      console.log("leftのAdd", leftAdd)
+      
+      const lefThreePartsOnlyCenter = getNextThreePartOnlyCenter(leftThreeParts);
+      const leftUniqueDividePerSegment = getLocalDividingLength(lefThreePartsOnlyCenter, polygon);
+      const processedLeftUniqueDividePerSegments = processLocalDividingLength(leftUniqueDividePerSegment);
+      const leftUniqueDividePerLine = convertToGlobalDividingLengthPerLines(processedLeftUniqueDividePerSegments);
+
+      console.log("unique, add", leftUniqueDividePerLine, leftAdd)
+
+      function generateLeftPartCP(
+        leftPart: Point[],
+        uniqueDivide: DividingLengthPerLines[],
+        additionalDivide: AdditionalLengthPerThreePart[],
+        additionalLeftLength: number,
+      ): CreasePattern {
+        const cpPoints: Point[] = []; // 折り線の点群を格納する配列
+        let totalAddLength = 0; // 追加分の長さの累積
+        let totalUniqueLength = 0; // ユニークな分割線の長さの累積
+        let totalDistanceTraveled = 0; // 探索で進んだ距離の累積
+      
+        if (threePart.shift.shiftX > 0){
+          // 初期点を追加
+          cpPoints.push({
+            x: leftPart[0].x,
+            y: leftPart[0].y - additionalLeftLength,
+          });
+        
+          // 探索処理
+          while (totalDistanceTraveled < Math.abs(leftPart[leftPart.length - 1].x - leftPart[0].x)) {
+            // 現在の探索点を計算
+            const currentPoint = {
+              x: leftPart[0].x + totalDistanceTraveled,
+              y: leftPart[0].y - totalDistanceTraveled - additionalLeftLength,
+            };
+        
+            // 探索点が uniqueDivide の元の line 上に乗っている場合
+            const uniqueLine = uniqueDivide.find((line) =>
+              line.line.direction === "x"
+                ? Math.abs(currentPoint.x - line.line.number) < scale / 2
+                : Math.abs(currentPoint.y - line.line.number) < scale / 2
+            );
+            if (uniqueLine) {
+              totalUniqueLength += uniqueLine.length;
+            }
+        
+            // 探索点が additionalDivide の元の line 上に乗っている場合
+            const additionalLine = additionalDivide.find((line) =>
+              line.line.direction === "x"
+                ? Math.abs(currentPoint.x - line.line.number) < scale / 2
+                : Math.abs(currentPoint.y - line.line.number) < scale / 2
+            );
+            if (additionalLine) {
+              const additionalLengthSum =
+                additionalLine.leftDividingLength +
+                additionalLine.rightDividingLength +
+                additionalLine.topDividingLength +
+                additionalLine.bottomDividingLength;
+        
+              // additionalDivide の点を追加（処理前後）
+              cpPoints.push({
+                x: currentPoint.x + totalUniqueLength + totalAddLength,
+                y: currentPoint.y - totalUniqueLength - additionalLeftLength,
+              });
+              totalAddLength += additionalLengthSum;
+              cpPoints.push({
+                x: currentPoint.x + totalUniqueLength + totalAddLength,
+                y: currentPoint.y - totalUniqueLength - additionalLeftLength,
+              });
+            }
+        
+            // 探索点を進める
+            totalDistanceTraveled += scale;
+          }
+        
+          // 最後の点を追加
+          cpPoints.push({
+            x: leftPart[0].x + totalDistanceTraveled + totalUniqueLength + totalAddLength,
+            y: leftPart[0].y - totalDistanceTraveled - totalUniqueLength - additionalLeftLength,
+          });
+        
+          // 点群をポリライン化し、線分に分割
+          const lineSegments: LineSegment[] = [];
+          for (let i = 0; i < cpPoints.length - 1; i++) {
+            lineSegments.push({
+              start: cpPoints[i],
+              end: cpPoints[i + 1],
+            });
+          }
+        
+          // ポリラインを scale / 2 ごとに区切り、交互に valleyfold と mountainfold に追加
+          const creasePattern: CreasePattern = { mountainfold: [], valleyfold: [] };
+          let isValley = true;
+        
+          for (let i = 0; i < lineSegments.length; i++) {
+            const segment = lineSegments[i];
+            const segmentLength = Math.sqrt(
+              Math.pow(segment.end.x - segment.start.x, 2) + Math.pow(segment.end.y - segment.start.y, 2)
+            );
+        
+            if (segmentLength > scale / 2) {
+              // 分割が必要
+              let remainingLength = segmentLength;
+              let startPoint = segment.start;
+        
+              while (remainingLength > scale / 2) {
+                const ratio = (scale / 2) / remainingLength;
+                const nextPoint = {
+                  x: startPoint.x + (segment.end.x - startPoint.x) * ratio,
+                  y: startPoint.y + (segment.end.y - startPoint.y) * ratio,
+                };
+        
+                const newSegment: LineSegment = { start: startPoint, end: nextPoint };
+                if (isValley) {
+                  creasePattern.valleyfold.push(newSegment);
+                } else {
+                  creasePattern.mountainfold.push(newSegment);
+                }
+                isValley = !isValley;
+        
+                remainingLength -= scale / 2;
+                startPoint = nextPoint;
+              }
+        
+              // 残りの線分を追加
+              const remainingSegment: LineSegment = { start: startPoint, end: segment.end };
+              if (isValley) {
+                creasePattern.valleyfold.push(remainingSegment);
+              } else {
+                creasePattern.mountainfold.push(remainingSegment);
+              }
+            } else {
+              // 分割不要
+              if (isValley) {
+                creasePattern.valleyfold.push(segment);
+              } else {
+                creasePattern.mountainfold.push(segment);
+              }
+              isValley = !isValley;
+            }
+          }
+          return creasePattern;
+        }
+
+        if (threePart.shift.shiftX < 0){
+          // 初期点を追加
+          cpPoints.push({
+            x: leftPart[0].x,
+            y: leftPart[0].y + additionalLeftLength,
+          });
+        
+          // 探索処理
+          while (totalDistanceTraveled < Math.abs(leftPart[leftPart.length - 1].x - leftPart[0].x)) {
+            // 現在の探索点を計算
+            const currentPoint = {
+              x: leftPart[0].x + totalDistanceTraveled,
+              y: leftPart[0].y - totalDistanceTraveled - additionalLeftLength,
+            };
+        
+            // 探索点が uniqueDivide の元の line 上に乗っている場合
+            const uniqueLine = uniqueDivide.find((line) =>
+              line.line.direction === "x"
+                ? Math.abs(currentPoint.x - line.line.number) < scale / 2
+                : Math.abs(currentPoint.y - line.line.number) < scale / 2
+            );
+            if (uniqueLine) {
+              totalUniqueLength += uniqueLine.length;
+            }
+        
+            // 探索点が additionalDivide の元の line 上に乗っている場合
+            const additionalLine = additionalDivide.find((line) =>
+              line.line.direction === "x"
+                ? Math.abs(currentPoint.x - line.line.number) < scale / 2
+                : Math.abs(currentPoint.y - line.line.number) < scale / 2
+            );
+            if (additionalLine) {
+              const additionalLengthSum =
+                additionalLine.leftDividingLength +
+                additionalLine.rightDividingLength +
+                additionalLine.topDividingLength +
+                additionalLine.bottomDividingLength;
+        
+              // additionalDivide の点を追加（処理前後）
+              cpPoints.push({
+                x: currentPoint.x + totalUniqueLength + totalAddLength,
+                y: currentPoint.y - totalUniqueLength - additionalLeftLength,
+              });
+              totalAddLength += additionalLengthSum;
+              cpPoints.push({
+                x: currentPoint.x + totalUniqueLength + totalAddLength,
+                y: currentPoint.y - totalUniqueLength - additionalLeftLength,
+              });
+            }
+        
+            // 探索点を進める
+            totalDistanceTraveled += scale;
+          }
+        
+          // 最後の点を追加
+          cpPoints.push({
+            x: leftPart[0].x + totalDistanceTraveled + totalUniqueLength + totalAddLength,
+            y: leftPart[0].y - totalDistanceTraveled - totalUniqueLength - additionalLeftLength,
+          });
+        
+          // 点群をポリライン化し、線分に分割
+          const lineSegments: LineSegment[] = [];
+          for (let i = 0; i < cpPoints.length - 1; i++) {
+            lineSegments.push({
+              start: cpPoints[i],
+              end: cpPoints[i + 1],
+            });
+          }
+        
+          // ポリラインを scale / 2 ごとに区切り、交互に valleyfold と mountainfold に追加
+          const creasePattern: CreasePattern = { mountainfold: [], valleyfold: [] };
+          let isValley = true;
+        
+          for (let i = 0; i < lineSegments.length; i++) {
+            const segment = lineSegments[i];
+            const segmentLength = Math.sqrt(
+              Math.pow(segment.end.x - segment.start.x, 2) + Math.pow(segment.end.y - segment.start.y, 2)
+            );
+        
+            if (segmentLength > scale / 2) {
+              // 分割が必要
+              let remainingLength = segmentLength;
+              let startPoint = segment.start;
+        
+              while (remainingLength > scale / 2) {
+                const ratio = (scale / 2) / remainingLength;
+                const nextPoint = {
+                  x: startPoint.x + (segment.end.x - startPoint.x) * ratio,
+                  y: startPoint.y + (segment.end.y - startPoint.y) * ratio,
+                };
+        
+                const newSegment: LineSegment = { start: startPoint, end: nextPoint };
+                if (isValley) {
+                  creasePattern.valleyfold.push(newSegment);
+                } else {
+                  creasePattern.mountainfold.push(newSegment);
+                }
+                isValley = !isValley;
+        
+                remainingLength -= scale / 2;
+                startPoint = nextPoint;
+              }
+        
+              // 残りの線分を追加
+              const remainingSegment: LineSegment = { start: startPoint, end: segment.end };
+              if (isValley) {
+                creasePattern.valleyfold.push(remainingSegment);
+              } else {
+                creasePattern.mountainfold.push(remainingSegment);
+              }
+            } else {
+              // 分割不要
+              if (isValley) {
+                creasePattern.valleyfold.push(segment);
+              } else {
+                creasePattern.mountainfold.push(segment);
+              }
+              isValley = !isValley;
+            }
+          }
+          return creasePattern;
+        }
+
+        if (threePart.shift.shiftX > 0){
+          // 初期点を追加
+          cpPoints.push({
+            x: leftPart[0].x,
+            y: leftPart[0].y - additionalLeftLength,
+          });
+        
+          // 探索処理
+          while (totalDistanceTraveled < Math.abs(leftPart[leftPart.length - 1].x - leftPart[0].x)) {
+            // 現在の探索点を計算
+            const currentPoint = {
+              x: leftPart[0].x + totalDistanceTraveled,
+              y: leftPart[0].y - totalDistanceTraveled - additionalLeftLength,
+            };
+        
+            // 探索点が uniqueDivide の元の line 上に乗っている場合
+            const uniqueLine = uniqueDivide.find((line) =>
+              line.line.direction === "x"
+                ? Math.abs(currentPoint.x - line.line.number) < scale / 2
+                : Math.abs(currentPoint.y - line.line.number) < scale / 2
+            );
+            if (uniqueLine) {
+              totalUniqueLength += uniqueLine.length;
+            }
+        
+            // 探索点が additionalDivide の元の line 上に乗っている場合
+            const additionalLine = additionalDivide.find((line) =>
+              line.line.direction === "x"
+                ? Math.abs(currentPoint.x - line.line.number) < scale / 2
+                : Math.abs(currentPoint.y - line.line.number) < scale / 2
+            );
+            if (additionalLine) {
+              const additionalLengthSum =
+                additionalLine.leftDividingLength +
+                additionalLine.rightDividingLength +
+                additionalLine.topDividingLength +
+                additionalLine.bottomDividingLength;
+        
+              // additionalDivide の点を追加（処理前後）
+              cpPoints.push({
+                x: currentPoint.x + totalUniqueLength + totalAddLength,
+                y: currentPoint.y - totalUniqueLength - additionalLeftLength,
+              });
+              totalAddLength += additionalLengthSum;
+              cpPoints.push({
+                x: currentPoint.x + totalUniqueLength + totalAddLength,
+                y: currentPoint.y - totalUniqueLength - additionalLeftLength,
+              });
+            }
+        
+            // 探索点を進める
+            totalDistanceTraveled += scale;
+          }
+        
+          // 最後の点を追加
+          cpPoints.push({
+            x: leftPart[0].x + totalDistanceTraveled + totalUniqueLength + totalAddLength,
+            y: leftPart[0].y - totalDistanceTraveled - totalUniqueLength - additionalLeftLength,
+          });
+        
+          // 点群をポリライン化し、線分に分割
+          const lineSegments: LineSegment[] = [];
+          for (let i = 0; i < cpPoints.length - 1; i++) {
+            lineSegments.push({
+              start: cpPoints[i],
+              end: cpPoints[i + 1],
+            });
+          }
+        
+          // ポリラインを scale / 2 ごとに区切り、交互に valleyfold と mountainfold に追加
+          const creasePattern: CreasePattern = { mountainfold: [], valleyfold: [] };
+          let isValley = true;
+        
+          for (let i = 0; i < lineSegments.length; i++) {
+            const segment = lineSegments[i];
+            const segmentLength = Math.sqrt(
+              Math.pow(segment.end.x - segment.start.x, 2) + Math.pow(segment.end.y - segment.start.y, 2)
+            );
+        
+            if (segmentLength > scale / 2) {
+              // 分割が必要
+              let remainingLength = segmentLength;
+              let startPoint = segment.start;
+        
+              while (remainingLength > scale / 2) {
+                const ratio = (scale / 2) / remainingLength;
+                const nextPoint = {
+                  x: startPoint.x + (segment.end.x - startPoint.x) * ratio,
+                  y: startPoint.y + (segment.end.y - startPoint.y) * ratio,
+                };
+        
+                const newSegment: LineSegment = { start: startPoint, end: nextPoint };
+                if (isValley) {
+                  creasePattern.valleyfold.push(newSegment);
+                } else {
+                  creasePattern.mountainfold.push(newSegment);
+                }
+                isValley = !isValley;
+        
+                remainingLength -= scale / 2;
+                startPoint = nextPoint;
+              }
+        
+              // 残りの線分を追加
+              const remainingSegment: LineSegment = { start: startPoint, end: segment.end };
+              if (isValley) {
+                creasePattern.valleyfold.push(remainingSegment);
+              } else {
+                creasePattern.mountainfold.push(remainingSegment);
+              }
+            } else {
+              // 分割不要
+              if (isValley) {
+                creasePattern.valleyfold.push(segment);
+              } else {
+                creasePattern.mountainfold.push(segment);
+              }
+              isValley = !isValley;
+            }
+          }
+          return creasePattern;
+        }
+
+        if (threePart.shift.shiftX > 0){
+          // 初期点を追加
+          cpPoints.push({
+            x: leftPart[0].x,
+            y: leftPart[0].y - additionalLeftLength,
+          });
+        
+          // 探索処理
+          while (totalDistanceTraveled < Math.abs(leftPart[leftPart.length - 1].x - leftPart[0].x)) {
+            // 現在の探索点を計算
+            const currentPoint = {
+              x: leftPart[0].x + totalDistanceTraveled,
+              y: leftPart[0].y - totalDistanceTraveled - additionalLeftLength,
+            };
+        
+            // 探索点が uniqueDivide の元の line 上に乗っている場合
+            const uniqueLine = uniqueDivide.find((line) =>
+              line.line.direction === "x"
+                ? Math.abs(currentPoint.x - line.line.number) < scale / 2
+                : Math.abs(currentPoint.y - line.line.number) < scale / 2
+            );
+            if (uniqueLine) {
+              totalUniqueLength += uniqueLine.length;
+            }
+        
+            // 探索点が additionalDivide の元の line 上に乗っている場合
+            const additionalLine = additionalDivide.find((line) =>
+              line.line.direction === "x"
+                ? Math.abs(currentPoint.x - line.line.number) < scale / 2
+                : Math.abs(currentPoint.y - line.line.number) < scale / 2
+            );
+            if (additionalLine) {
+              const additionalLengthSum =
+                additionalLine.leftDividingLength +
+                additionalLine.rightDividingLength +
+                additionalLine.topDividingLength +
+                additionalLine.bottomDividingLength;
+        
+              // additionalDivide の点を追加（処理前後）
+              cpPoints.push({
+                x: currentPoint.x + totalUniqueLength + totalAddLength,
+                y: currentPoint.y - totalUniqueLength - additionalLeftLength,
+              });
+              totalAddLength += additionalLengthSum;
+              cpPoints.push({
+                x: currentPoint.x + totalUniqueLength + totalAddLength,
+                y: currentPoint.y - totalUniqueLength - additionalLeftLength,
+              });
+            }
+        
+            // 探索点を進める
+            totalDistanceTraveled += scale;
+          }
+        
+          // 最後の点を追加
+          cpPoints.push({
+            x: leftPart[0].x + totalDistanceTraveled + totalUniqueLength + totalAddLength,
+            y: leftPart[0].y - totalDistanceTraveled - totalUniqueLength - additionalLeftLength,
+          });
+        
+          // 点群をポリライン化し、線分に分割
+          const lineSegments: LineSegment[] = [];
+          for (let i = 0; i < cpPoints.length - 1; i++) {
+            lineSegments.push({
+              start: cpPoints[i],
+              end: cpPoints[i + 1],
+            });
+          }
+        
+          // ポリラインを scale / 2 ごとに区切り、交互に valleyfold と mountainfold に追加
+          const creasePattern: CreasePattern = { mountainfold: [], valleyfold: [] };
+          let isValley = true;
+        
+          for (let i = 0; i < lineSegments.length; i++) {
+            const segment = lineSegments[i];
+            const segmentLength = Math.sqrt(
+              Math.pow(segment.end.x - segment.start.x, 2) + Math.pow(segment.end.y - segment.start.y, 2)
+            );
+        
+            if (segmentLength > scale / 2) {
+              // 分割が必要
+              let remainingLength = segmentLength;
+              let startPoint = segment.start;
+        
+              while (remainingLength > scale / 2) {
+                const ratio = (scale / 2) / remainingLength;
+                const nextPoint = {
+                  x: startPoint.x + (segment.end.x - startPoint.x) * ratio,
+                  y: startPoint.y + (segment.end.y - startPoint.y) * ratio,
+                };
+        
+                const newSegment: LineSegment = { start: startPoint, end: nextPoint };
+                if (isValley) {
+                  creasePattern.valleyfold.push(newSegment);
+                } else {
+                  creasePattern.mountainfold.push(newSegment);
+                }
+                isValley = !isValley;
+        
+                remainingLength -= scale / 2;
+                startPoint = nextPoint;
+              }
+        
+              // 残りの線分を追加
+              const remainingSegment: LineSegment = { start: startPoint, end: segment.end };
+              if (isValley) {
+                creasePattern.valleyfold.push(remainingSegment);
+              } else {
+                creasePattern.mountainfold.push(remainingSegment);
+              }
+            } else {
+              // 分割不要
+              if (isValley) {
+                creasePattern.valleyfold.push(segment);
+              } else {
+                creasePattern.mountainfold.push(segment);
+              }
+              isValley = !isValley;
+            }
+          }
+          return creasePattern;
+        }
+      }
+
+      const leftCP = generateLeftPartCP(threePart.leftPart, leftUniqueDividePerLine, leftAdd, centerAddFromLeft)
+
+      CP.push(leftCP)
+    } 
+    
+    const threePartCP = mergeCreasePatterns(CP)
+    return threePartCP
+  }
+
+  const generateSegmentsCreasePattern = (
+    segments: DividingLengthPerSegments[],
+    divide: DividingLengthPerLines[]
+  ): CreasePattern => {
+    const result: CreasePattern = { mountainfold: [], valleyfold: [] };
+  
+    segments.forEach((segment) => {
+      if (segment.horizontalDividingLength > 0) {
+        const shiftX = divide
+          .filter((line) => line.line.direction === "x" && line.line.number < segment.line.start.x)
+          .reduce((sum, line) => sum + line.length, 0);
+  
+        const startShiftY = divide
+          .filter((line) => line.line.direction === "y" && line.line.number <= segment.line.start.y)
+          .reduce((sum, line) => sum + line.length, 0);
+  
+        const endShiftY = divide
+          .filter((line) => line.line.direction === "y" && line.line.number < segment.line.end.y)
+          .reduce((sum, line) => sum + line.length, 0);
+  
+        // Shift the original segment
+        const shiftedLine: LineSegment = {
+          start: {
+            x: segment.line.start.x + shiftX,
+            y: segment.line.start.y + startShiftY,
+          },
+          end: {
+            x: segment.line.end.x + shiftX,
+            y: segment.line.end.y + endShiftY,
+          },
+        };
+  
+        // Generate mountainfolds along the shifted line
+        const mountainCount = Math.floor(segment.horizontalDividingLength / 20);
+        for (let i = 0; i < mountainCount - 1; i++) {
+          const offset = scale * (i + 1);
+  
+          // Create a mountain fold parallel to the shifted line
+          const mountainFold: LineSegment = {
+            start: {
+              x: shiftedLine.start.x + offset,
+              y: shiftedLine.start.y,
+            },
+            end: {
+              x: shiftedLine.end.x + offset,
+              y: shiftedLine.end.y,
+            },
+          };
+  
+          result.mountainfold.push(mountainFold);
+        }
+
+        const standardValleyLine: LineSegment = {
+          start: {
+            x: shiftedLine.start.x + (scale / 2),
+            y: shiftedLine.start.y,
+          },
+          end: {
+            x: shiftedLine.end.x + (scale / 2),
+            y: shiftedLine.end.y,
+          },
+        };
+
+        const valleyCount = Math.floor(segment.horizontalDividingLength / 20);
+        for (let i = 0; i < valleyCount; i++) {
+          const offset = scale * i;
+          const valleyFold: LineSegment = {
+            start: {
+              x: standardValleyLine.start.x + offset,
+              y: standardValleyLine.start.y,
+            },
+            end: {
+              x: standardValleyLine.end.x + offset,
+              y: standardValleyLine.end.y,
+            },
+          };
+  
+          result.valleyfold.push(valleyFold);
+        }
+      }
+  
+      if (segment.verticalDividingLength > 0) {
+        const shiftY = divide
+          .filter((line) => line.line.direction === "y" && line.line.number < segment.line.start.y)
+          .reduce((sum, line) => sum + line.length, 0);
+  
+        const startShiftX = divide
+          .filter((line) => line.line.direction === "x" && line.line.number <= segment.line.start.x)
+          .reduce((sum, line) => sum + line.length, 0);
+  
+        const endShiftX = divide
+          .filter((line) => line.line.direction === "x" && line.line.number < segment.line.end.x)
+          .reduce((sum, line) => sum + line.length, 0);
+  
+        // Shift the original segment
+        const shiftedLine: LineSegment = {
+          start: {
+            x: segment.line.start.x + startShiftX,
+            y: segment.line.start.y + shiftY,
+          },
+          end: {
+            x: segment.line.end.x + endShiftX,
+            y: segment.line.end.y + shiftY,
+          },
+        };
+  
+        // Generate valleyfolds along the shifted line
+        const mauntainCount = Math.floor(segment.verticalDividingLength / 20);
+        for (let i = 0; i < mauntainCount - 1; i++) {
+          const offset = scale * (i + 1);
+
+          const mauntainFold: LineSegment = {
+            start: {
+              x: shiftedLine.start.x,
+              y: shiftedLine.start.y + offset,
+            },
+            end: {
+              x: shiftedLine.end.x,
+              y: shiftedLine.end.y + offset,
+            },
+          };
+  
+          result.mountainfold.push(mauntainFold);
+        }
+
+        const standardValleyLine: LineSegment = {
+          start: {
+            x: shiftedLine.start.x,
+            y: shiftedLine.start.y + (scale / 2),
+          },
+          end: {
+            x: shiftedLine.end.x,
+            y: shiftedLine.end.y + (scale / 2),
+          },
+        };
+
+        const valleyCount = Math.floor(segment.verticalDividingLength / 20);
+        for (let i = 0; i < valleyCount; i++) {
+          const offset = scale * i;
+          const valleyFold: LineSegment = {
+            start: {
+              x: standardValleyLine.start.x,
+              y: standardValleyLine.start.y + offset,
+            },
+            end: {
+              x: standardValleyLine.end.x,
+              y: standardValleyLine.end.y + offset,
+            },
+          };
+  
+          result.valleyfold.push(valleyFold);
+        }
+      }
+    });
+  
+    return result;
+  };
+
+  const generatePaper = (
+    boundingRectangle: Point[],
+    dividePerLine: DividingLengthPerLines[]
+  ): LineSegment[] => {
+    // x方向とy方向の伸び幅を計算
+    const stretchX = dividePerLine
+      .filter(line => line.line.direction === "x")
+      .reduce((sum, line) => sum + line.length, 0);
+  
+    const stretchY = dividePerLine
+      .filter(line => line.line.direction === "y")
+      .reduce((sum, line) => sum + line.length, 0);
+  
+    // 左下の頂点を固定し、boundingRectangleを引き伸ばす
+    const bottomLeft = boundingRectangle[3]; // 左下
+    const topLeft = boundingRectangle[0];    // 左上
+    const topRight = boundingRectangle[1];  // 右上
+    const bottomRight = boundingRectangle[2]; // 右下
+  
+    // 伸ばした後の各頂点を計算
+    const newBottomRight: Point = {
+      x: bottomRight.x + stretchX,
+      y: bottomRight.y,
+    };
+  
+    const newTopLeft: Point = {
+      x: topLeft.x,
+      y: topLeft.y + stretchY,
+    };
+  
+    const newTopRight: Point = {
+      x: topRight.x + stretchX,
+      y: topRight.y + stretchY,
+    };
+  
+    // LineSegment[] に各辺を追加
+    const stretchedRectangle: LineSegment[] = [
+      { start: bottomLeft, end: newBottomRight }, // 下辺
+      { start: bottomLeft, end: newTopLeft },     // 左辺
+      { start: newBottomRight, end: newTopRight }, // 右辺
+      { start: newTopLeft, end: newTopRight },    // 上辺
+    ];
+  
+    return stretchedRectangle;
+  };
+
+  function divideAndSeparatePolygon(
+    points: Point[],
+    dividingLines: DividingLengthPerLines[]
+  ): Point[][] {
+    const separatedPolygons: Point[][] = [];
+  
+    function getOffsetVector(line: OrthogonalLine, distance: number): { dx: number; dy: number } {
+      // 離す操作をX軸またはY軸方向にのみ適用
+      if (line.direction === "x") {
+        return { dx: 0, dy: distance };
+      } else if (line.direction === "y") {
+        return { dx: distance, dy: 0 };
+      }
+      return { dx: 0, dy: 0 };
+    }
+  
+    function isPointOnLine(point: Point, line: OrthogonalLine): boolean {
+      if (line.direction === "x") {
+        return Math.abs(point.y - line.number) < 1e-8;
+      } else if (line.direction === "y") {
+        return Math.abs(point.x - line.number) < 1e-8;
+      }
+      return false;
+    }
+  
+    function cutPolygon(points: Point[], line: OrthogonalLine): Point[][] {
+      const above: Point[] = [];
+      const below: Point[] = [];
+      const n = points.length;
+  
+      for (let i = 0; i < n; i++) {
+        const current = points[i];
+        const next = points[(i + 1) % n];
+        const currentAbove = line.direction === "x" ? current.y > line.number : current.x > line.number;
+        const nextAbove = line.direction === "x" ? next.y > line.number : next.x > line.number;
+  
+        if (currentAbove) above.push(current);
+        else below.push(current);
+  
+        if (line.direction === "x" && current.y === next.y && current.y === line.number) {
+          above.push(current);
+          below.push(current);
+        } else if (line.direction === "y" && current.x === next.x && current.x === line.number) {
+          above.push(current);
+          below.push(current);
+        } else if (currentAbove !== nextAbove) {
+          const t =
+            line.direction === "x"
+              ? (line.number - current.y) / (next.y - current.y)
+              : (line.number - current.x) / (next.x - current.x);
+  
+          const intersection: Point = {
+            x: current.x + t * (next.x - current.x),
+            y: current.y + t * (next.y - current.y),
+          };
+  
+          above.push(intersection);
+          below.push(intersection);
+        }
+      }
+  
+      return [above, below];
+    }
+  
+    let currentPolygons: Point[][] = [points];
+    dividingLines.forEach((dividingLine) => {
+      const newPolygons: Point[][] = [];
+  
+      currentPolygons.forEach((polygon) => {
+        const [above, below] = cutPolygon(polygon, dividingLine.line);
+        newPolygons.push(above, below);
+      });
+  
+      currentPolygons = newPolygons;
+    });
+  
+    currentPolygons.forEach((polygon, index) => {
+      const offsetLine = dividingLines[index % dividingLines.length];
+      const offsetVector = getOffsetVector(offsetLine.line, offsetLine.length);
+  
+      const translatedPolygon = polygon.map((point) => {
+        // X軸またはY軸を基準に適切に離す
+        if (offsetLine.line.direction === "x") {
+          return {
+            x: point.x,
+            y: point.y + (point.y >= offsetLine.line.number ? offsetVector.dy : -offsetVector.dy),
+          };
+        } else if (offsetLine.line.direction === "y") {
+          return {
+            x: point.x + (point.x >= offsetLine.line.number ? offsetVector.dx : -offsetVector.dx),
+            y: point.y,
+          };
+        }
+        return point;
+      });
+  
+      separatedPolygons.push(translatedPolygon);
+    });
+  
+    return separatedPolygons;
+  }
 
   const onCompute = () => {
     const canvas = canvasRef.current;
     if (canvas) {
-      const context = canvas.getContext('2d');
+      const context = canvas.getContext("2d");
       if (context) {
-
-        const counterClockwisePoitns = ensureCounterClockwise(polygonPoints);
-        const processedPolygonPoints = processPoints(counterClockwisePoitns);
+        const processedPolygonPoints = processPoints(polygonPoints);
+        const boundingRectangle = computeBoundingRectangle(processedPolygonPoints);
         const concaveParts = getConcaveParts(processedPolygonPoints);
         const allThreeParts = processConcaves(concaveParts);
-        const local = getLocalDividingLength(allThreeParts, polygonPoints)
-        const global = getGlobalDividingLength(local);
-
-        console.log('前処理1', processedPolygonPoints);
-        console.log('凹み部分', concaveParts);
-        console.log('all three parts', allThreeParts);
-        console.log('局所、大域', local, global);
-
-
+        const local = getLocalDividingLength(allThreeParts, processedPolygonPoints);
+        const processedDivide = processLocalDividingLength(local);
+        const global = getGlobalDividingLength(processedDivide);
+        const globalPerLine = convertToGlobalDividingLengthPerLines(global);
+  
+        const segmentCP: CreasePattern = generateSegmentsCreasePattern(global, globalPerLine);
+        const threePartCP = generateThreePartCreasePattern(allThreeParts[1], globalPerLine, global, processedPolygonPoints);
+        const resultCP = mergeCreasePatterns([segmentCP, threePartCP]);
+        const paper = generatePaper(boundingRectangle, globalPerLine);
+        const AdditionOneThreePart = additionalDividingPerThreePart(allThreeParts[1], globalPerLine, global, processedPolygonPoints);
+        const dividingPolygon = divideAndSeparatePolygon(processedPolygonPoints, globalPerLine); // 分割された多角形を取得
+  
+        console.log("注目パート", allThreeParts[1]);
+  
+        // キャンバスのサイズ
+        const canvasWidth = canvas.width;
+        const canvasHeight = canvas.height;
+  
+        // 入力データの境界を計算
+        const { minX, maxX, minY, maxY } = getMinMaxXY([
+          ...processedPolygonPoints,
+          ...resultCP.mountainfold.flatMap((line) => [line.start, line.end]),
+          ...resultCP.valleyfold.flatMap((line) => [line.start, line.end]),
+        ]);
+  
+        // スケールとオフセットを計算して描画範囲を調整
+        const xScale = canvasWidth / (maxX - minX);
+        const yScale = canvasHeight / (maxY - minY);
+        const scale = Math.min(xScale, yScale) * 0.8; // 20%余白を確保
+        const slideOffset = 100; // 下方向へのスライドオフセット
+        const xOffset = -minX * scale;
+        const yOffset = canvasHeight - (maxY - minY) * scale - slideOffset;
+  
+        const transformPoint = (point: Point): Point => ({
+          x: point.x * scale + xOffset,
+          y: canvasHeight - (point.y * scale + yOffset), // 上に行くほど y が大きくなるよう反転
+        });
+  
+        const transformLineSegment = (line: LineSegment): LineSegment => ({
+          start: transformPoint(line.start),
+          end: transformPoint(line.end),
+        });
+  
+        // キャンバスをクリア
+        context.clearRect(0, 0, canvasWidth, canvasHeight);
+  
+        // 用いる紙を計算
+        context.strokeStyle = "black";
+        paper.forEach((line) => {
+          const transformedLine = transformLineSegment(line);
+          context.beginPath();
+          context.moveTo(transformedLine.start.x, transformedLine.start.y);
+          context.lineTo(transformedLine.end.x, transformedLine.end.y);
+          context.stroke();
+        });
+  
+        // Mountainfold（赤）を描画
+        context.strokeStyle = "red";
+        resultCP.mountainfold.forEach((line) => {
+          const transformedLine = transformLineSegment(line);
+          context.beginPath();
+          context.moveTo(transformedLine.start.x, transformedLine.start.y);
+          context.lineTo(transformedLine.end.x, transformedLine.end.y);
+          context.stroke();
+        });
+  
+        // Valleyfold（青）を描画
+        context.strokeStyle = "blue";
+        resultCP.valleyfold.forEach((line) => {
+          const transformedLine = transformLineSegment(line);
+          context.beginPath();
+          context.moveTo(transformedLine.start.x, transformedLine.start.y);
+          context.lineTo(transformedLine.end.x, transformedLine.end.y);
+          context.stroke();
+        });
+  
         setIsComputed(true);
       }
     }
   };
-
+  
+  
   return (
     <div
       style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}
