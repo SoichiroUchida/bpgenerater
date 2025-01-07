@@ -1074,9 +1074,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
 
   // 点の集合から特定の点を探し、その前後の点を含めた３点を取得する関数
   const findThreePoints = (points: Point[], target: Point): Point[] => {
-    console.log("points:", points);
-    console.log("target:", target);
-
     const index = points.findIndex((point) => point.x === target.x && point.y === target.y);
     if (index === -1) {
         console.error("The target point is not found in the given points.");
@@ -1098,8 +1095,8 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
       startHaichi.topDividingLength,
       startHaichi.bottomDividingLength,
     ].filter(val => val === 0).length;
-  
-    return zeroCount;
+    console.log("zeroCount:", zeroCount);
+    return 4 - zeroCount;
   }
   
   // 局所的な離し方を統合して、大域的な離し方を計算する関数。
@@ -1184,8 +1181,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
 
         const isStartOnPolylineEdge = isPointOnPolylineEdge(lineStart, polygon);
         const isEndOnPolylineEdge = isPointOnPolylineEdge(lineEnd, polygon);
-        console.log("lineStart:", lineStart, "isStartOnPolylineEdge:", isStartOnPolylineEdge);
-        console.log("lineEnd:", lineEnd, "isEndOnPolylineEdge:", isEndOnPolylineEdge);
         let leftStart = 0;
         let rightStart = 0;
         let topStart = 0;
@@ -1194,24 +1189,26 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         let rightEnd = 0;
         let topEnd = 0;
         let bottomEnd = 0;
-
+        
+        // どの必要条件の影響もうけていないセグメントの端点に対する処理
         if (startHaichi.length === 0) {
+          // 端点がポリラインの頂点に乗っている場合
           if (!isStartOnPolylineEdge) {
             const [prePoint, point, nextPoint] = findThreePoints(polygon, lineStart);
-            const isLeftSide = isLeft(prePoint, lineEnd, lineStart) || isLeft(nextPoint, point, prePoint);
+            const isLeftSide = isLeft(prePoint, lineEnd, lineStart) > 0|| isLeft(nextPoint, lineEnd, lineStart) > 0;
             const segmentDirection = getVectorDirection(lineEnd, lineStart);
             if (segmentDirection.shiftX > 0) {
+              topStart = isLeftSide ? 0: maxVertical;
+              bottomStart = isLeftSide ?   maxVertical: 0;
+            } else if (segmentDirection.shiftX < 0) {
               topStart = isLeftSide ? maxVertical : 0;
               bottomStart = isLeftSide ? 0 : maxVertical;
-            } else if (segmentDirection.shiftX < 0) {
-              bottomStart = isLeftSide ? maxVertical : 0;
-              topStart = isLeftSide ? 0 : maxVertical;
             } else if (segmentDirection.shiftY > 0) {
-              leftStart = isLeftSide ? maxHorizontal : 0;
-              rightStart = isLeftSide ? 0 : maxHorizontal;
+              leftStart = isLeftSide ? 0: maxHorizontal;
+              rightStart = isLeftSide ? maxHorizontal: 0;
             } else {
-              rightStart = isLeftSide ? maxHorizontal : 0;
-              leftStart = isLeftSide ? 0 : maxHorizontal;
+              rightStart = isLeftSide ? 0: maxHorizontal;
+              leftStart = isLeftSide ?  maxHorizontal: 0;
             }
           }
         } else {
@@ -1231,22 +1228,22 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         if (endHaichi.length === 0) {
           if (!isEndOnPolylineEdge) {
             const [prePoint, point, nextPoint] = findThreePoints(polygon, lineEnd);
-            const isLeftSide = isLeft(prePoint, lineStart, lineEnd) || isLeft(nextPoint, point, prePoint);
+            const isLeftSide = isLeft(prePoint, lineStart, lineEnd) > 0 || isLeft(nextPoint, lineStart, lineEnd) > 0;
             const segmentDirection = getVectorDirection(lineStart, lineEnd);
             if (segmentDirection.shiftX > 0) {
+              topEnd = isLeftSide ? 0 : maxVertical;
+              bottomEnd = isLeftSide ? maxVertical : 0;
+            } else if (segmentDirection.shiftX < 0) {
               topEnd = isLeftSide ? maxVertical : 0;
               bottomEnd = isLeftSide ? 0 : maxVertical;
-            } else if (segmentDirection.shiftX < 0) {
-              bottomEnd = isLeftSide ? maxVertical : 0;
-              topEnd = isLeftSide ? 0 : maxVertical;
             } else if (segmentDirection.shiftY > 0) {
-              leftEnd = isLeftSide ? maxHorizontal : 0;
-              rightEnd = isLeftSide ? 0 : maxHorizontal;
-            } else {
-              rightEnd = isLeftSide ? maxHorizontal : 0;
               leftEnd = isLeftSide ? 0 : maxHorizontal;
+              rightEnd = isLeftSide ? maxHorizontal : 0;
+            } else {
+              rightEnd = isLeftSide ? 0 : maxHorizontal;
+              leftEnd = isLeftSide ? maxHorizontal : 0;
             }
-          }
+          } 
         } else {
           if (checkZeroCount(endHaichi[0]) === 1) {
             leftEnd = (endHaichi[0].leftDividingLength === 0) ? 0 : maxHorizontal;
@@ -1367,7 +1364,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
       });
   };
 
-  // Centerから派生したThreeParts を取得する関数
+  // Centerから派生したThreeParts のみを取得する関数
   function getNextThreePartOnlyCenter(threePart: ThreeParts): ThreeParts[] {
     const threePartsGroup: ThreeParts[] = [threePart];
 
@@ -1412,7 +1409,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
   
     // パーツ（行）の一覧を出力
     console.group("パーツ情報 (parts)");
-    console.log(parts);
     console.groupEnd();
   
     const shiftX = threePart.shift.shiftX;
@@ -1428,7 +1424,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     ) => {
       console.group(`候補 (sorted by ${sortedKeyName})`);
       candidate.forEach((c, i) => {
-        console.log(`  [${i}]: line =`, c.line, `(${sortedKeyName} = ${c.key})`);
       });
       console.groupEnd();
     };
@@ -1443,7 +1438,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         line.some(pt => pt.x === sx && pt.y === sy)
       );
       if (!startLine) {
-        console.log("開始行が見つからないため終了します。");
         return [];
       }
   
@@ -1457,7 +1451,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         const sameY = remain.y;
   
         console.group(`=== Iteration #${iterationCount} ===`);
-        console.log("現在の remain:", remain);
   
         // 次に選択する候補をフィルタリング
         const candidate = parts
@@ -1476,7 +1469,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         printCandidates(candidate, "minX");
   
         if (!candidate.length) {
-          console.log("候補が見つからないためループを抜けます。");
           console.groupEnd();
           break;
         }
@@ -1484,15 +1476,13 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         // 最もminXが小さい行を採用
         const nextLine = candidate[0].line;
         orderedLines.push(nextLine);
-        console.log("選択された次の行 (nextLine):", nextLine);
-  
+
         // remainを更新
         if (nextLine[0].y === remain.y) {
           remain = nextLine[1];
         } else {
           remain = nextLine[0];
         }
-        console.log("更新後の remain:", remain);
         console.groupEnd();
       }
   
@@ -1505,7 +1495,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         line.some(pt => pt.x === sx && pt.y === sy)
       );
       if (!startLine) {
-        console.log("開始行が見つからないため終了します。");
         return [];
       }
   
@@ -1519,7 +1508,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         const sameY = remain.y;
   
         console.group(`=== Iteration #${iterationCount} ===`);
-        console.log("現在の remain:", remain);
   
         const candidate = parts
           .filter(l => !orderedLines.includes(l))
@@ -1536,21 +1524,18 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         printCandidates(candidate, "maxX");
   
         if (!candidate.length) {
-          console.log("候補が見つからないためループを抜けます。");
           console.groupEnd();
           break;
         }
   
         const nextLine = candidate[0].line;
         orderedLines.push(nextLine);
-        console.log("選択された次の行 (nextLine):", nextLine);
-  
+
         if (nextLine[0].y === remain.y) {
           remain = nextLine[1];
         } else {
           remain = nextLine[0];
         }
-        console.log("更新後の remain:", remain);
         console.groupEnd();
       }
   
@@ -1564,7 +1549,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         line.some(pt => pt.y === sy && pt.x === sx)
       );
       if (!startLine) {
-        console.log("開始行が見つからないため終了します。");
+
         return [];
       }
 
@@ -1583,7 +1568,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         const sameX = remain.x;
 
         console.group(`=== Iteration #${iterationCount} ===`);
-        console.log("現在の remain:", remain);
 
         // candidateを求める際も “y座標” の扱いを “x座標” に読み替え
         // ここでは「pA.x === sameX のとき、y の最大値を key として格納」する例
@@ -1602,7 +1586,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         printCandidates(candidate, "maxY");
 
         if (!candidate.length) {
-          console.log("候補が見つからないためループを抜けます。");
           console.groupEnd();
           break;
         }
@@ -1610,7 +1593,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         // 最も y 座標 (key) が大きい行を次の行として選択
         const nextLine = candidate[0].line;
         orderedLines.push(nextLine);
-        console.log("選択された次の行 (nextLine):", nextLine);
 
         // remainの更新も (x, y) を入れ替えたロジックに
         if (nextLine[0].x === remain.x) {
@@ -1619,7 +1601,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
           remain = nextLine[0];
         }
 
-        console.log("更新後の remain:", remain);
         console.groupEnd();
       }
 
@@ -1633,7 +1614,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         line.some(pt => pt.y === sy && pt.x === sx)
       );
       if (!startLine) {
-        console.log("開始行が見つからないため終了します。");
+
         return [];
       }
 
@@ -1652,7 +1633,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         const sameX = remain.x;
 
         console.group(`=== Iteration #${iterationCount} ===`);
-        console.log("現在の remain:", remain);
 
         // 次に選択する候補をフィルタリング
         //   もともと minX を探していた部分を minY に変更し、
@@ -1681,7 +1661,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         printCandidates(candidate, "minY");
 
         if (!candidate.length) {
-          console.log("候補が見つからないためループを抜けます。");
           console.groupEnd();
           break;
         }
@@ -1689,20 +1668,15 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         // 最も minY が小さい線分を採用
         const nextLine = candidate[0].line;
         orderedLines.push(nextLine);
-        console.log("選択された次の行 (nextLine):", nextLine);
-
         // remainを更新（もともと y === remain.y の判定を x === remain.x に変更）
         if (nextLine[0].x === remain.x) {
           remain = nextLine[1];
         } else {
           remain = nextLine[0];
         }
-        console.log("更新後の remain:", remain);
         console.groupEnd();
       }
     }
-
-    console.log("orderedLines:", orderedLines);
 
     const orderedParts: Point[] = [];
 
@@ -1716,7 +1690,22 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
       i === 0 || p.x !== s[i - 1].x || p.y !== s[i - 1].y
     );
   }
-  
+
+  // １つのThreePartに対して固有配置を計算する関数
+  const getKoyuHaichi = (threePart: ThreeParts): DividingLengthPerSegments => {
+    const allThreePart = getNextThreePartOnlyCenter(threePart);
+    
+
+    return
+  }
+
+  // １つのThreePartの入口の余分な段折りを計算する関数
+  const getExtraDanori = (threePart: ThreeParts, sogoHaichi: SogoHaichi[]): Boolean => {
+    return ;
+  };
+
+  // １つのThreePartの、入口を含むすべての余分な段折りを計算する関数
+
   // 複数の折り線集合を１つにまとめる関数。
   function mergeCreasePatterns(patterns: (CreasePattern | undefined | null)[]): CreasePattern {
     return patterns.reduce(
@@ -1964,7 +1953,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         const resultCP = mergeCreasePatterns([segmentCP]);
         const paper = generatePaper(boundingRectangle, sogoHaichiPerLine);
 
-        const oneThreePart = concaveToThreeParts(concaveParts[0]);
+        const oneThreePart = concaveToThreeParts(concaveParts[1]);
         const centerPartsOnly = getNextThreePartOnlyCenter(oneThreePart);
         const koyuHaichi = getLocalHaichi(centerPartsOnly, processedPolygonPoints);
         const kihonryoiki = getKihonRyoiki(oneThreePart);
