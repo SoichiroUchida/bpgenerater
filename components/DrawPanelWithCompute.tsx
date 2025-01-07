@@ -1953,7 +1953,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         const resultCP = mergeCreasePatterns([segmentCP]);
         const paper = generatePaper(boundingRectangle, sogoHaichiPerLine);
 
-        const oneThreePart = concaveToThreeParts(concaveParts[1]);
+        const oneThreePart = concaveToThreeParts(concaveParts[0]);
         const centerPartsOnly = getNextThreePartOnlyCenter(oneThreePart);
         const koyuHaichi = getLocalHaichi(centerPartsOnly, processedPolygonPoints);
         const kihonryoiki = getKihonRyoiki(oneThreePart);
