@@ -67,12 +67,13 @@ interface DividingLengthPerLines {
   length: number;
 }
 
-interface AdditionalLengthPerThreePart {
-  line: OrthogonalLine;
-  leftDividingLength: number;
-  rightDividingLength: number;
-  topDividingLength: number;
-  bottomDividingLength: number;
+interface TsuikaDanori {
+  koyuLeft: DividingLengthPerSegments[],
+  koyuCenter: DividingLengthPerSegments[],
+  koyuRight: DividingLengthPerSegments[],
+  sogoLeft: DividingLengthPerSegments[],
+  sogoCenter: DividingLengthPerSegments[],
+  sogoRight: DividingLengthPerSegments[],
 }
 
 interface CreasePattern {
@@ -1691,20 +1692,95 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     );
   }
 
-  // １つのThreePartに対して固有配置を計算する関数
-  const getKoyuHaichi = (threePart: ThreeParts): DividingLengthPerSegments => {
-    const allThreePart = getNextThreePartOnlyCenter(threePart);
-    
-
-    return
+  // SogoHaichiをDividingLengthPerSegmentsに変換する関数
+  function convertSogoHaichiToDividingLengthPerSegments(sogoHaichiArray: SogoHaichi[]): DividingLengthPerSegments[] {
+    return sogoHaichiArray.map(sogo => ({
+        originalPart: sogo.originalPart,
+        line: sogo.line,
+        leftDividingLength: sogo.leftDividingLength,
+        rightDividingLength: sogo.rightDividingLength,
+        topDividingLength: sogo.topDividingLength,
+        bottomDividingLength: sogo.bottomDividingLength,
+        horizontalDividingLength: sogo.horizontalDividingLength,
+        verticalDividingLength: sogo.verticalDividingLength
+    }));
   }
 
-  // １つのThreePartの入口の余分な段折りを計算する関数
-  const getExtraDanori = (threePart: ThreeParts, sogoHaichi: SogoHaichi[]): Boolean => {
-    return ;
-  };
+  // １つのThreePartに対して固有配置を計算する関数
+  function getKoyuHaichi(threePart: ThreeParts, processedPolyon: Point[]): DividingLengthPerSegments[] {
+    // ThreePartをgetNextThreePartOnlyCenterに代入
+    const centerParts = getNextThreePartOnlyCenter(threePart);
 
-  // １つのThreePartの、入口を含むすべての余分な段折りを計算する関数
+    // その結果とPoint[]をgetLocalHaichiに代入
+    const localHaichi = getLocalHaichi(centerParts, processedPolyon);
+
+    // その代入結果をさらにprocessLocalHaichiに代入
+    const processedLocalHaichi = processLocalHaichi(localHaichi);
+
+    // その出力結果を出力値とする
+    return processedLocalHaichi;
+  }
+
+  // １つのThreePartの余分な段折りを計算する関数
+  function getAdditionalDanori(threePart: ThreeParts, points: Point[], sogoHaichiArray: SogoHaichi[]): TsuikaDanori {
+
+    const koyuCenter = getKoyuHaichi(threePart, points);
+
+    // ThreeParts.right と ThreeParts.left をそれぞれ getNextThreePartsFromSide に代入
+    const nextRightParts = getNextThreePartsFromSide(threePart.rightPart, threePart.shift);
+    const nextLeftParts = getNextThreePartsFromSide(threePart.leftPart, threePart.shift);
+
+    // nextRightParts と nextLeftParts の各要素を getKoyuHaichi に代入し、その結果をまとめる
+    const koyuRight = nextRightParts.map(part => getKoyuHaichi(part, points)).flat();
+    const koyuLeft = nextLeftParts.map(part => getKoyuHaichi(part, points)).flat();
+
+    // 端点のベクトルが `shift` と平行かどうかを判定する関数
+    const isParallel = (line: LineSegment, shift: { shiftX: number, shiftY: number }): boolean => {
+      const vec = { x: line.end.x - line.start.x, y: line.end.y - line.start.y };
+      return vec.x * shift.shiftY === vec.y * shift.shiftX;
+    };
+
+    // ThreeParts がなすポリライン上に originalPart が乗っているかつ、line が ThreePart.shift と平行な SogoHaichi[] の元をすべて取り出し
+    const sogoCenter = sogoHaichiArray.filter(sogo => 
+      isPointOnPolyline(sogo.originalPart[0], threePart.centerPart) && isParallel(sogo.line, threePart.shift)
+    );
+    const sogoRight = sogoHaichiArray.filter(sogo => 
+      isPointOnPolyline(sogo.originalPart[0], threePart.rightPart) && !isParallel(sogo.line, threePart.shift)
+    );
+    const sogoLeft = sogoHaichiArray.filter(sogo => 
+      isPointOnPolyline(sogo.originalPart[0], threePart.leftPart) && !isParallel(sogo.line, threePart.shift)
+    );
+
+    function filterSegmentsByVector(points: [Point, Point], segments: DividingLengthPerSegments[]): DividingLengthPerSegments[] {
+      const [p1, p2] = points;
+  
+      // ベクトルの左側またはベクトル上にあるかを判定する関数
+      const isLeftOrOnVector = (point: Point, vectorStart: Point, vectorEnd: Point): boolean => {
+          return isLeft(point, vectorStart, vectorEnd) >= 0;
+      };
+  
+      // 入力の DividingLengthPerSegments[] の中から条件を満たすものを取り出す
+      return segments.filter(segment => 
+          isLeftOrOnVector(segment.line.start, p1, p2) && isLeftOrOnVector(segment.line.end, p1, p2)
+      );
+    }
+
+    const processedLeftSogo = filterSegmentsByVector([threePart.leftPart[0], threePart.leftPart[threePart.leftPart.length - 1]], sogoLeft);
+    const processedRightSogo = filterSegmentsByVector([threePart.rightPart[0], threePart.rightPart[threePart.rightPart.length - 1]], sogoRight);
+    const processedLeftKoyu = filterSegmentsByVector([threePart.leftPart[0], threePart.leftPart[threePart.leftPart.length - 1]], koyuLeft);
+    const processedRightKoyu = filterSegmentsByVector([threePart.rightPart[0], threePart.rightPart[threePart.rightPart.length - 1]], koyuRight);
+
+    // 最後に出力を {koyuLeft, koyuCenter, koyuRight, sogoLeft, sogoCenter, sogoRight} とする
+    return {
+      koyuLeft: processedLeftKoyu,
+      koyuCenter: koyuCenter,
+      koyuRight: processedRightKoyu,
+      sogoLeft: processedLeftSogo,
+      sogoCenter: sogoCenter,
+      sogoRight: processedRightSogo
+    };
+  }
+
 
   // 複数の折り線集合を１つにまとめる関数。
   function mergeCreasePatterns(patterns: (CreasePattern | undefined | null)[]): CreasePattern {
@@ -1953,13 +2029,12 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         const resultCP = mergeCreasePatterns([segmentCP]);
         const paper = generatePaper(boundingRectangle, sogoHaichiPerLine);
 
-        
         const oneThreePart = concaveToThreeParts(concaveParts[0]);
-        const centerPartsOnly = getNextThreePartOnlyCenter(oneThreePart);
-        const koyuHaichi = getLocalHaichi(centerPartsOnly, processedPolygonPoints);
+        const koyuHaichi = getKoyuHaichi(oneThreePart, processedPolygonPoints);
         const kihonryoiki = getKihonRyoiki(oneThreePart);
+        const additionalDanori = getAdditionalDanori(oneThreePart, processedPolygonPoints, sogoHaichi);
   
-        console.log("localHaichi, ,processedLocal, sogoHaichi, sogoHaichiPerLine, centerParts, koyuHaichi,kihonryoiki", localHaichi, processedLocalHaichi, sogoHaichi, sogoHaichiPerLine, centerPartsOnly, koyuHaichi, kihonryoiki);
+        console.log("localHaichi, ,processedLocal, sogoHaichi, sogoHaichiPerLine, koyuHaichi,kihonryoiki, tsuikaDanori", localHaichi, processedLocalHaichi, sogoHaichi, sogoHaichiPerLine, koyuHaichi, kihonryoiki, additionalDanori);
   
         // キャンバスのサイズ
         const canvasWidth = canvas.width;
