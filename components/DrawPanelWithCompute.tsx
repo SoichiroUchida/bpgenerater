@@ -67,6 +67,13 @@ interface DividingLengthPerLines {
   length: number;
 }
 
+interface Range {
+  topLeft: Point;
+  topRight: Point;
+  bottomLeft: Point;
+  bottomRight: Point;
+}
+
 interface TsuikaDanori {
   koyuLeft: DividingLengthPerSegments[],
   koyuCenter: DividingLengthPerSegments[],
@@ -74,6 +81,16 @@ interface TsuikaDanori {
   sogoLeft: DividingLengthPerSegments[],
   sogoCenter: DividingLengthPerSegments[],
   sogoRight: DividingLengthPerSegments[],
+}
+
+interface GapResult {
+  leftGap: number;
+  rightGap: number;
+}
+
+interface HaichiLengthResult {
+  haichiLengthX: number;
+  haichiLengthY: number;
 }
 
 interface CreasePattern {
@@ -86,7 +103,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scale = 20;
   const epsilon = 1e-10;
-  let maxIterations = 20;
+  let maxIterations = 100;
 
   // 多角形の頂点が反時計回りかを判定する関数。
   function isClockwise(points: Point[]): boolean {
@@ -1086,7 +1103,7 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     const next = points[(index + 1) % n];
 
     return [prev, target, next];
-};
+  };
 
   // DividingLengthPerSegments　がもつ必要条件の個数を数える関数
   function checkZeroCount(startHaichi: DividingLengthPerSegments): number {
@@ -1096,11 +1113,11 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
       startHaichi.topDividingLength,
       startHaichi.bottomDividingLength,
     ].filter(val => val === 0).length;
-    console.log("zeroCount:", zeroCount);
     return 4 - zeroCount;
   }
   
   // 局所的な離し方を統合して、大域的な離し方を計算する関数。
+  // 結局、分割セグメントがポリオミノの頂点に存在する場合の扱いについては、改善できたか不明。
   const getSogoHaichi = (
     polygon: Point[],
     processLocalDividingLength: DividingLengthPerSegments[]
@@ -1190,8 +1207,8 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         let rightEnd = 0;
         let topEnd = 0;
         let bottomEnd = 0;
-        
-        // どの必要条件の影響もうけていないセグメントの端点に対する処理
+
+        // 分割線分の端点に対して必要条件を規定する配置が存在しないとき。
         if (startHaichi.length === 0) {
           // 端点がポリラインの頂点に乗っている場合
           if (!isStartOnPolylineEdge) {
@@ -1741,8 +1758,12 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     };
 
     // ThreeParts がなすポリライン上に originalPart が乗っているかつ、line が ThreePart.shift と平行な SogoHaichi[] の元をすべて取り出し
+    // centerが空でも対応できるようにしている。
     const sogoCenter = sogoHaichiArray.filter(sogo => 
-      isPointOnPolyline(sogo.originalPart[0], threePart.centerPart) && isParallel(sogo.line, threePart.shift)
+      (isPointOnPolyline(sogo.originalPart[0], [threePart.leftPart[0], threePart.leftPart[threePart.leftPart.length - 1]])
+      || isPointOnPolyline(sogo.originalPart[0], [threePart.rightPart[0], threePart.rightPart[threePart.rightPart.length - 1]])
+      || isPointOnPolyline(sogo.originalPart[0], threePart.centerPart)) 
+      && isParallel(sogo.line, threePart.shift)
     );
     const sogoRight = sogoHaichiArray.filter(sogo => 
       isPointOnPolyline(sogo.originalPart[0], threePart.rightPart) && !isParallel(sogo.line, threePart.shift)
@@ -1781,6 +1802,1028 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     };
   }
 
+  // 集合の最後の要素を削除する関数
+  function deleatLastElement<T>(set: Set<T>): T | undefined {
+    if (set.size === 0) {
+      return undefined;
+    }
+  
+    // 1. 最後の要素を特定する（挿入順を考慮）
+    let lastElement: T | undefined;
+    for (const element of set) {
+      lastElement = element; // ループの最終周回時に最後の要素が入る
+    }
+  
+    // 2. 最後の要素を削除
+    if (lastElement !== undefined) {
+      set.delete(lastElement);
+    }
+  
+    return lastElement;
+  }
+
+  // 2つの線分が交差しているかを判定する関数
+  const isIntersecting = (p1: Point, p2: Point, q1: Point, q2: Point): boolean => {
+    const orientation = (p: Point, q: Point, r: Point): number => {
+      const val = (q.y - p.y) * (r.x - q.x) - (q.x - p.x) * (r.y - q.y);
+      if (val === 0) return 0; // collinear
+      return val > 0 ? 1 : 2; // clock or counterclock wise
+    };
+  
+    const o1 = orientation(p1, p2, q1);
+    const o2 = orientation(p1, p2, q2);
+    const o3 = orientation(q1, q2, p1);
+    const o4 = orientation(q1, q2, p2);
+  
+    if (o1 !== o2 && o3 !== o4) return true;
+  
+    if (o1 === 0 && onSegment(p1, q1, p2)) return true;
+    if (o2 === 0 && onSegment(p1, q2, p2)) return true;
+    if (o3 === 0 && onSegment(q1, p1, q2)) return true;
+    if (o4 === 0 && onSegment(q1, p2, q2)) return true;
+  
+    return false;
+  };
+  
+  // 点が線分上にあるかを判定する関数
+  const onSegment = (p: Point, q: Point, r: Point): boolean => {
+    if (q.x <= Math.max(p.x, r.x) && q.x >= Math.min(p.x, r.x) && q.y <= Math.max(p.y, r.y) && q.y >= Math.min(p.y, r.y)) {
+      return true;
+    }
+    return false;
+  };
+  
+  //　1つのThreePartからCPを計算
+  const generateOneThreePartCreasePattern = (
+    threePart: ThreeParts,
+    divide: TsuikaDanori,
+    sogoHaichiPerLine: DividingLengthPerLines[],
+    scale: number
+  ): CreasePattern => {
+    const mountainfold: LineSegment[] = [];
+    const valleyfold: LineSegment[] = [];
+
+      // 斜め線の初期位置を計算する関数
+      // その斜め線よりも左下にある配置を合計する
+      // ここではギャップは考慮しない
+      const calculateHaichiLengthsForLeft = (point: Point, lines: DividingLengthPerLines[]): HaichiLengthResult => {
+        let haichiLengthX = 0;
+        let haichiLengthY = 0;
+      
+        lines.forEach(line => {
+          if(threePart.shift.shiftX > 0) {
+            if (line.line.direction === 'x' && line.line.number <= point.x) {
+              haichiLengthX += line.length;
+            }
+            if (line.line.direction === 'y' && line.line.number <= point.y) {
+              haichiLengthY += line.length;
+            }
+          } else if(threePart.shift.shiftX < 0) {
+            if (line.line.direction === 'x' && line.line.number < point.x) {
+              haichiLengthX += line.length;
+            }
+            if (line.line.direction === 'y' && line.line.number < point.y) {
+              haichiLengthY += line.length;
+            }
+          } else if(threePart.shift.shiftY > 0) {
+            if (line.line.direction === 'x' && line.line.number < point.x) {
+              haichiLengthX += line.length;
+            }
+            if (line.line.direction === 'y' && line.line.number <= point.y) {
+              haichiLengthY += line.length;
+            }
+          } else if(threePart.shift.shiftY < 0) {
+            if (line.line.direction === 'x' && line.line.number <= point.x) {
+              haichiLengthX += line.length;
+            }
+            if (line.line.direction === 'y' && line.line.number < point.y) {
+              haichiLengthY += line.length;
+            }
+          }
+        });
+      
+        return { haichiLengthX, haichiLengthY };
+      };
+      const calculateHaichiLengthsForRight = (point: Point, lines: DividingLengthPerLines[]): HaichiLengthResult => {
+        let haichiLengthX = 0;
+        let haichiLengthY = 0;
+      
+        lines.forEach(line => {
+          if(threePart.shift.shiftX > 0) {
+            if (line.line.direction === 'x' && line.line.number <= point.x) {
+              haichiLengthX += line.length;
+            }
+            if (line.line.direction === 'y' && line.line.number < point.y) {
+              haichiLengthY += line.length;
+            }
+          } else if(threePart.shift.shiftX < 0) {
+            if (line.line.direction === 'x' && line.line.number < point.x) {
+              haichiLengthX += line.length;
+            }
+            if (line.line.direction === 'y' && line.line.number <= point.y) {
+              haichiLengthY += line.length;
+            }
+          } else if(threePart.shift.shiftY > 0) {
+            if (line.line.direction === 'x' && line.line.number <= point.x) {
+              haichiLengthX += line.length;
+            }
+            if (line.line.direction === 'y' && line.line.number <= point.y) {
+              haichiLengthY += line.length;
+            }
+          } else if(threePart.shift.shiftY < 0) {
+            if (line.line.direction === 'x' && line.line.number < point.x) {
+              haichiLengthX += line.length;
+            }
+            if (line.line.direction === 'y' && line.line.number < point.y) {
+              haichiLengthY += line.length;
+            }
+          }
+        });
+      
+        return { haichiLengthX, haichiLengthY };
+      };
+
+      const haichiLeft = calculateHaichiLengthsForLeft(threePart.leftPart[0], sogoHaichiPerLine);
+      const haichiRight = calculateHaichiLengthsForRight(threePart.rightPart[threePart.rightPart.length - 1], sogoHaichiPerLine);
+
+      if (threePart.shift.shiftX > 0) {
+        // 斜め線とパーツのギャップを計算する関数
+        const calculateGaps = (tsuikaDanori: TsuikaDanori, leftPoint: Point, rightPoint: Point): GapResult | null => {
+
+          // ギャップの計算に関与する配置を探す関数
+          const findSegment = (segments: DividingLengthPerSegments[], point: Point): DividingLengthPerSegments | null => {
+            for (const segment of segments) {
+              if ((Math.abs(isLeft(point, segment.line.start, segment.line.end)) < epsilon) && !(segment.originalPart[0].x === 0 && segment.originalPart[0].y === 0)) {
+                return segment;
+              }
+            }
+            return null;
+          };
+        
+          const koyuLeftSegment = findSegment(tsuikaDanori.koyuCenter, leftPoint);
+          const sogoLeftSegment = findSegment(tsuikaDanori.sogoCenter, leftPoint);
+          const koyuRightSegment = findSegment(tsuikaDanori.koyuCenter, rightPoint);
+          const sogoRightSegment = findSegment(tsuikaDanori.sogoCenter, rightPoint);
+        
+          let leftGap = 0;
+          let rightGap = 0;
+          if (threePart.leftPart.length > 1 && koyuLeftSegment) {
+            leftGap = Math.abs(koyuLeftSegment.topDividingLength - sogoLeftSegment.topDividingLength);
+          }
+          if (threePart.rightPart.length > 1 && koyuRightSegment) {
+            rightGap = Math.abs(koyuRightSegment.bottomDividingLength - sogoRightSegment.bottomDividingLength);
+          }
+          return { leftGap, rightGap };
+        };
+        // 左の側辺領域の折り線の計算
+        if(threePart.leftPart.length >= 2) {
+          let lengthP = 0;
+          let horizonKoyu = 0;
+          let horizonSogo = 0;
+          let isValley = true;
+          let naname: Point[] = [];
+
+          const startPoint = threePart.leftPart[0];
+          const endPoint = threePart.leftPart[threePart.leftPart.length - 1];
+          const totalDistance = Math.sqrt(
+              Math.pow(endPoint.x - startPoint.x, 2) + Math.pow(endPoint.y - startPoint.y, 2)
+          );
+          const steps = Math.ceil(totalDistance / scale);
+
+          const gaps = calculateGaps(divide, threePart.leftPart[0], threePart.rightPart[threePart.rightPart.length - 1]);
+          console.log("gaps, tsuikadanori", gaps, divide);
+
+          // 斜め線をなす点列、10沖に記録
+          const points: Point[] = [];
+          // 左辺の側辺領域の対頂点
+          let lastPoint: Point = {x:0, y:0}
+          let firstPoint : Point = {x:0, y:0}
+          // 山谷が交互に代わるときの基準線点
+          let tsuika: Point[] = [];
+          
+          for (let step = 0; step <= steps; step++) {
+            const t = step / steps;
+            const p: Point = {
+                x: startPoint.x + t * (endPoint.x - startPoint.x),
+                y: startPoint.y + t * (endPoint.y - startPoint.y)
+            };
+
+            lengthP = t * totalDistance;
+
+            let horizonSogo0 = 0;
+            let horizonKoyu0 = 0;
+            let sogoDivideL= 0;
+            let sogoDivideR = 0;
+            let koyuDivideL = 0;
+            let koyuDivideR = 0;
+            let newPoint1: Point = {x:0, y:0}
+            let newPoint2: Point = {x:0, y:0}
+            let newPoint: Point = {x:0, y:0}
+            if (step === 0) {
+              const newpoint:Point =
+              {
+                x: startPoint.x + haichiLeft.haichiLengthX,
+                y: startPoint.y + haichiLeft.haichiLengthY - gaps.leftGap
+              } 
+              points.push(newpoint);
+              naname.push(newpoint);
+              // 探索点において総合配置が行われている場合
+            } else {
+              divide.sogoLeft.forEach(segment => {
+                if (Math.abs(isLeft(p, segment.line.start, segment.line.end)) < epsilon) {
+                  horizonSogo0 = segment.horizontalDividingLength;
+                  sogoDivideL = segment.leftDividingLength;
+                  sogoDivideR = segment.rightDividingLength;
+                }
+              });
+
+              // L探索点において固有配置が行われている場合、
+              // 固有配置の必要条件をleftDividingLength,rightDividingLengthとして格納
+              divide.koyuLeft.forEach(segment => {
+                if (Math.abs(isLeft(p, segment.line.start, segment.line.end)) < epsilon) {
+                    horizonKoyu0 = segment.horizontalDividingLength;
+                    koyuDivideL = segment.leftDividingLength;
+                    koyuDivideR = segment.rightDividingLength
+                }
+              });
+
+              // 斜め線の基準線を計算
+              newPoint1 = {
+                x: startPoint.x 
+                + lengthP + horizonSogo 
+                + haichiLeft.haichiLengthX,
+                y: startPoint.y 
+                - lengthP - horizonKoyu 
+                + haichiLeft.haichiLengthY - gaps.leftGap
+              };
+              points.push(newPoint1);
+              naname.push(newPoint1);
+              if (Math.abs(horizonSogo0) > 0) {
+                if (sogoDivideL - koyuDivideL > 0 && koyuDivideR === 0) {
+                  newPoint = {
+                    x: startPoint.x 
+                    + lengthP + horizonSogo + horizonSogo0 - horizonKoyu0
+                    + haichiLeft.haichiLengthX,
+                    y: startPoint.y 
+                    - lengthP - horizonKoyu 
+                    + haichiLeft.haichiLengthY - gaps.leftGap
+                  };
+                  naname.push(newPoint);
+
+                  // ジグザグに線を追加していく。
+                  const dx = newPoint.x - newPoint1.x;
+                  const dy = newPoint.y - newPoint1.y;
+                  const distance = Math.sqrt(dx * dx + dy * dy);
+
+                  // 2. 最初に newPoint1 を push
+                  tsuika.push(newPoint1);
+
+                  // 3. 10 間隔ずつ「距離が lineDist = 10, 20, 30, ...」になる位置を計算して点を作る
+                  //    ただし「distance が 10 間隔より短い」場合はループしないで抜ける
+                  const interval = 10;
+                  let currentDist = interval;
+
+                  while (currentDist < distance) {
+                    // 線分上での割合 (0 ~ 1)
+                    const t = currentDist / distance;
+
+                    // 補間して点を生成
+                    let px = newPoint1.x + dx * t;
+                    let py = newPoint1.y + dy * t;
+
+                    // 4. 距離が 20n+10 のときは y 座標を +10 シフト
+                    //    （10, 30, 50, ... => currentDist % 20 === 10）
+                    if (currentDist % 20 === 10) {
+                      py += 10;
+                    }
+
+                    points.push({ x: px, y: py });
+                    tsuika.push({ x: px, y: py });
+
+                    currentDist += interval;
+                  }
+
+                } else if(koyuDivideL === 0 && sogoDivideR - koyuDivideR > 0) {
+                  newPoint2 = {
+                    x: startPoint.x 
+                    + (lengthP + horizonSogo + horizonSogo0)
+                    + (haichiLeft.haichiLengthX),
+                    y: startPoint.y 
+                    - lengthP - horizonKoyu - horizonKoyu0
+                    + (haichiLeft.haichiLengthY - gaps.leftGap)
+                  };
+                  newPoint = {
+                    x: startPoint.x 
+                    + lengthP + horizonSogo + horizonKoyu0
+                    + haichiLeft.haichiLengthX,
+                    y: startPoint.y 
+                    - lengthP - horizonKoyu - horizonKoyu0 
+                    + haichiLeft.haichiLengthY - gaps.leftGap
+                  };
+      
+                  naname.push(newPoint);
+                  points.push(newPoint);
+
+
+                  // ジグザグに線を追加していく。
+                  const dx = newPoint2.x - newPoint.x;
+                  const dy = newPoint2.y - newPoint.y;
+                  const distance = Math.sqrt(dx * dx + dy * dy);
+
+                  // 3. 10 間隔ずつ「距離が lineDist = 10, 20, 30, ...」になる位置を計算して点を作る
+                  //    ただし「distance が 10 間隔より短い」場合はループしないで抜ける
+                  const interval = 10;
+                  let currentDist = interval;
+
+                  while (currentDist < distance + 10) {
+                    // 線分上での割合 (0 ~ 1)
+                    const t = currentDist / distance;
+
+                    // 補間して点を生成
+                    let px = newPoint.x + dx * t;
+                    let py = newPoint.y + dy * t;
+
+                    // 4. 距離が 20n+10 のときは y 座標を +10 シフト
+                    //    （10, 30, 50, ... => currentDist % 20 === 10）
+                    if (currentDist % 20 === 10) {
+                      py -= 10;
+                    }
+
+                    if (!(step === steps)) {
+                      points.push({ x: px, y: py });
+                    }
+                    tsuika.push({ x: px, y: py })
+                    currentDist += interval;
+                  }
+                  if (step === steps) {
+                    lastPoint = newPoint2;
+                  }
+                } else if ((horizonSogo0 - koyuDivideL - koyuDivideR) > 0) {
+                  const newPoint3 = {
+                    x: startPoint.x 
+                    + lengthP + horizonSogo + sogoDivideL - koyuDivideL
+                    + haichiLeft.haichiLengthX,
+                    y: startPoint.y 
+                    - lengthP - horizonKoyu 
+                    + haichiLeft.haichiLengthY - gaps.leftGap
+                  };
+                  naname.push(newPoint3);
+                  const newPoint4 = {
+                    x: startPoint.x 
+                    + lengthP + horizonSogo + sogoDivideL + koyuDivideR
+                    + haichiLeft.haichiLengthX,
+                    y: startPoint.y 
+                    - lengthP - horizonKoyu - horizonKoyu0
+                    + haichiLeft.haichiLengthY - gaps.leftGap
+                  };
+                  naname.push(newPoint4);
+
+                  // ジグザグに線を追加していく。
+                  const dx = newPoint3.x - newPoint1.x;
+                  const dy = newPoint3.y - newPoint1.y;
+                  const distance = Math.sqrt(dx * dx + dy * dy);
+
+                  // 3. 10 間隔ずつ「距離が lineDist = 10, 20, 30, ...」になる位置を計算して点を作る
+                  //    ただし「distance が 10 間隔より短い」場合はループしないで抜ける
+                  const interval = 10;
+                  let currentDist = interval;
+
+                  while (currentDist < distance) {
+                    // 線分上での割合 (0 ~ 1)
+                    const t = currentDist / distance;
+
+                    // 補間して点を生成
+                    let px = newPoint1.x + dx * t;
+                    let py = newPoint1.y + dy * t;
+
+                    // 4. 距離が 20n+10 のときは y 座標を +10 シフト
+                    //    （10, 30, 50, ... => currentDist % 20 === 10）
+                    if (currentDist % 20 === 10) {
+                      py += 10;
+                    }
+
+                    points.push({ x: px, y: py });
+                    tsuika.push({ x: px, y: py });
+
+                    currentDist += interval;
+                  }
+                } 
+              }
+              // horizonSogoとhorizonKoyuを更新
+              horizonSogo += horizonSogo0;
+              horizonKoyu += horizonKoyu0;
+
+              newPoint2 = {
+                x: startPoint.x 
+                + (lengthP + horizonSogo)
+                + (haichiLeft.haichiLengthX),
+                y: startPoint.y 
+                - lengthP - horizonKoyu 
+                + (haichiLeft.haichiLengthY - gaps.leftGap)
+              };
+              // 新しい点を記録
+              
+                points.push(newPoint2);
+                naname.push(newPoint2);
+            
+              // 最終的な斜め線の両端を取得
+              if (step === steps) {
+                lastPoint = {
+                  x: startPoint.x 
+                  + (lengthP + horizonSogo)
+                  + (haichiLeft.haichiLengthX),
+                  y: startPoint.y 
+                  - lengthP - horizonKoyu 
+                  + (haichiLeft.haichiLengthY - gaps.leftGap) + 10
+                };
+                firstPoint = {
+                  x: startPoint.x 
+                  + (haichiLeft.haichiLengthX),
+                  y: startPoint.y 
+                  + (haichiLeft.haichiLengthY) 
+                }
+              }
+            }
+          }
+
+          // 記録した点を前から順につないで線分を作成し、x軸への射影が10よりも大きい線分を切り取る
+          const cutSegments: LineSegment[] = [];
+          for (let i = 0; i < points.length - 1; i++) {
+            let start = points[i];
+            let end = points[i + 1];
+            while (Math.abs(end.x - start.x) > 10) {
+              const t = 10 / Math.abs(end.x - start.x);
+              const midPoint: Point = {
+                x: start.x + t * (end.x - start.x),
+                y: start.y + t * (end.y - start.y)
+              };
+              cutSegments.push({ start, end: midPoint });
+              start = midPoint;
+            }
+            cutSegments.push({ start, end });
+          }
+          if (cutSegments.length > 0) {
+            cutSegments.pop();
+          }
+
+          // 切り取った線分を交互に振り分ける
+          const filteredSegments = cutSegments.filter(segment => {
+            return !(segment.start.x === segment.end.x && segment.start.y === segment.end.y);
+          });
+          
+          filteredSegments.pop();
+          
+          filteredSegments.forEach(segment => {
+            if (isValley) {
+              valleyfold.push(segment);
+            } else {
+              mountainfold.push(segment);
+            }
+            isValley = !isValley;
+          });
+
+          const addRectangleFolds = (
+            firstPoint: Point,
+            lastPoint: Point,
+            mountainfold: LineSegment[],
+            valleyfold: LineSegment[],
+            teitaiten: Point[]
+          ) => {
+            // 長方形の右の辺の上から、10の間隔で水平な直線を左向きに引く
+            let isValley = false;
+            for (let y = firstPoint.y; y > lastPoint.y; y += -10) {
+              let currentPoint: Point = { x: lastPoint.x, y: y };
+              let direction: 'left' | 'down' = 'left';
+          
+              while (currentPoint.x > firstPoint.x && currentPoint.y > lastPoint.y) {
+                if (direction === 'left') {
+                  const nextPoint: Point = { x: currentPoint.x - 10, y: currentPoint.y };
+          
+                  // filteredSegmentsの元の線分とぶつかったら進路を真下に切り替える
+                  const collision = isPointOnPolyline(currentPoint, naname);
+          
+                  if (collision) {
+                    direction = 'down';
+                  } else {
+                    const fold: LineSegment = { start: currentPoint, end: nextPoint };
+                    const hitTeitai = teitaiten.some(tt => tt.x === currentPoint.x);
+                    if (hitTeitai) {
+                      isValley = !isValley;
+                    }
+                    if (isValley) {
+                      valleyfold.push(fold);
+                    } else {
+                      mountainfold.push(fold);
+                    }
+                    currentPoint = nextPoint;
+                  }
+                }
+          
+                if (direction === 'down') {
+                  const nextPoint: Point = { x: currentPoint.x, y: currentPoint.y - 10 };
+          
+                  const fold: LineSegment = { start: currentPoint, end: nextPoint };
+                  if (isValley) {
+                    valleyfold.push(fold);
+                  } else {
+                    mountainfold.push(fold);
+                  }
+                  currentPoint = nextPoint;
+                }
+              }
+          
+              isValley = !isValley;
+            }
+
+            // 追加段折りによる折り線を追加
+            tsuika.forEach((p) => {
+              if (p.x < firstPoint.x || p.x > lastPoint.x) {
+                return; // 無視または別処理
+              }
+
+              const segment: LineSegment = {
+                start: { x: p.x, y: firstPoint.y },
+                end: { x: p.x, y: lastPoint.y },
+              };
+
+              const offset = p.x - firstPoint.x;
+              if (offset % 20 === 0) {
+                mountainfold.push(segment);
+              } else {
+                valleyfold.push(segment);
+              }
+            });
+
+            // mountainfold, valleyfold をまとめて返却
+            return {
+              mountainfold,
+              valleyfold
+            };
+          };
+
+          addRectangleFolds(
+            firstPoint,
+            lastPoint,
+            mountainfold,
+            valleyfold,
+            tsuika
+          )
+        }
+        // 右の側辺領域の折り線の計算
+        if(threePart.rightPart.length >= 2) {
+          let lengthP = 0;
+          let horizonKoyu = 0;
+          let horizonSogo = 0;
+          let isValley = true;
+          let naname: Point[] = [];
+
+          const startPoint = threePart.rightPart[threePart.rightPart.length - 1];
+          const endPoint = threePart.rightPart[0];
+          const totalDistance = Math.sqrt(
+              Math.pow(endPoint.x - startPoint.x, 2) + Math.pow(endPoint.y - startPoint.y, 2)
+          );
+          const steps = Math.ceil(totalDistance / scale);
+          const gaps = calculateGaps(divide, threePart.leftPart[0], threePart.rightPart[threePart.rightPart.length - 1]);
+
+          // 斜め線をなす点列、10おきに記録
+          const points: Point[] = [];
+          // 右辺の側辺領域の対頂点
+          let lastPoint: Point = {x:0, y:0}
+          let firstPoint : Point = {x:0, y:0}
+          // 山谷が交互に代わるときの基準線点
+          let tsuika: Point[] = [];
+          
+          // 側辺に沿って点を探索させ、側辺領域の折り線の基準点を計算していく。
+          for (let step = 0; step <= steps; step++) {
+            const t = step / steps;
+            const p: Point = {
+                x: startPoint.x + t * (endPoint.x - startPoint.x),
+                y: startPoint.y + t * (endPoint.y - startPoint.y)
+            };
+
+            lengthP = t * totalDistance;
+
+            let horizonSogo0 = 0;
+            let horizonKoyu0 = 0;
+            let sogoDivideL= 0;
+            let sogoDivideR = 0;
+            let koyuDivideL = 0;
+            let koyuDivideR = 0;
+            let newPoint1: Point = {x:0, y:0}
+            let newPoint2: Point = {x:0, y:0}
+            let newPoint: Point = {x:0, y:0}
+            if (step === 0) {
+              const newpoint:Point =
+              {
+                x: startPoint.x + haichiRight.haichiLengthX,
+                y: startPoint.y + haichiRight.haichiLengthY + gaps.leftGap
+              } 
+              points.push(newpoint);
+              naname.push(newpoint);
+              // 探索点において総合配置が行われている場合
+            } else {
+              // 探索点において総合配置が行われている場合。
+              divide.sogoRight.forEach(segment => {
+                if (Math.abs(isLeft(p, segment.line.start, segment.line.end)) < epsilon) {
+                  horizonSogo0 = segment.horizontalDividingLength;
+                  sogoDivideL = segment.leftDividingLength;
+                  sogoDivideR = segment.rightDividingLength;
+                }
+              });
+
+              // L探索点において固有配置が行われている場合、
+              // 固有配置の必要条件をleftDividingLength,rightDividingLengthとして格納
+              divide.koyuRight.forEach(segment => {
+                if (Math.abs(isLeft(p, segment.line.start, segment.line.end)) < epsilon) {
+                    horizonKoyu0 = segment.horizontalDividingLength;
+                    koyuDivideL = segment.leftDividingLength;
+                    koyuDivideR = segment.rightDividingLength
+                }
+              });
+
+              // 斜め線の基準線を計算
+              newPoint1 = {
+                x: startPoint.x 
+                + lengthP + horizonSogo 
+                + haichiRight.haichiLengthX,
+                y: startPoint.y 
+                + lengthP + horizonKoyu 
+                + haichiRight.haichiLengthY + gaps.rightGap
+              };
+              points.push(newPoint1);
+              naname.push(newPoint1);
+
+              newPoint2 = {
+                x: startPoint.x 
+                + (lengthP + horizonSogo + horizonSogo0)
+                + (haichiRight.haichiLengthX),
+                y: startPoint.y 
+                + lengthP + horizonKoyu + horizonKoyu0
+                + (haichiRight.haichiLengthY - gaps.rightGap)
+              };
+
+              if (Math.abs(horizonSogo0) > 0) {
+                if (sogoDivideL - koyuDivideL > 0 && sogoDivideR === 0) {
+                  newPoint = {
+                    x: startPoint.x 
+                    + lengthP + horizonSogo + horizonSogo0 - horizonKoyu0
+                    + haichiRight.haichiLengthX,
+                    y: startPoint.y 
+                    + lengthP + horizonKoyu 
+                    + haichiLeft.haichiLengthY + gaps.rightGap
+                  };
+                  naname.push(newPoint);
+
+                  // ジグザグに線を追加していく。
+                  const dx = newPoint.x - newPoint1.x;
+                  const dy = newPoint.y - newPoint1.y;
+                  const distance = Math.sqrt(dx * dx + dy * dy);
+
+                  // 2. 最初に newPoint1 を push
+                  tsuika.push(newPoint1);
+
+                  // 3. 10 間隔ずつ「距離が lineDist = 10, 20, 30, ...」になる位置を計算して点を作る
+                  //    ただし「distance が 10 間隔より短い」場合はループしないで抜ける
+                  const interval = 10;
+                  let currentDist = interval;
+
+                  while (currentDist < distance) {
+                    // 線分上での割合 (0 ~ 1)
+                    const t = currentDist / distance;
+
+                    // 補間して点を生成
+                    let px = newPoint1.x + dx * t;
+                    let py = newPoint1.y + dy * t;
+
+                    // 4. 距離が 20n+10 のときは y 座標を +10 シフト
+                    //    （10, 30, 50, ... => currentDist % 20 === 10）
+                    if (currentDist % 20 === 10) {
+                      py -= 10;
+                    }
+
+                    points.push({ x: px, y: py });
+                    tsuika.push({ x: px, y: py });
+
+                    currentDist += interval;
+                  }
+                  points.push(newPoint2);
+                  naname.push(newPoint2);
+                } else if(sogoDivideL === 0 && sogoDivideR - koyuDivideR > 0) {
+                  newPoint2 = {
+                    x: startPoint.x 
+                    + (lengthP + horizonSogo + horizonSogo0)
+                    + (haichiRight.haichiLengthX),
+                    y: startPoint.y 
+                    + lengthP + horizonKoyu + horizonKoyu0
+                    + (haichiRight.haichiLengthY + gaps.rightGap)
+                  };
+                  newPoint = {
+                    x: startPoint.x 
+                    + lengthP + horizonSogo + horizonKoyu0
+                    + haichiRight.haichiLengthX,
+                    y: startPoint.y 
+                    + lengthP + horizonKoyu + horizonKoyu0 
+                    + haichiRight.haichiLengthY + gaps.rightGap
+                  };
+      
+                  naname.push(newPoint);
+                  points.push(newPoint);
+
+
+                  // ジグザグに線を追加していく。
+                  const dx = newPoint2.x - newPoint.x;
+                  const dy = newPoint2.y - newPoint.y;
+                  const distance = Math.sqrt(dx * dx + dy * dy);
+
+                  // 3. 10 間隔ずつ「距離が lineDist = 10, 20, 30, ...」になる位置を計算して点を作る
+                  //    ただし「distance が 10 間隔より短い」場合はループしないで抜ける
+                  const interval = 10;
+                  let currentDist = interval;
+
+                  while (currentDist < distance + 10) {
+                    // 線分上での割合 (0 ~ 1)
+                    const t = currentDist / distance;
+
+                    // 補間して点を生成
+                    let px = newPoint.x + dx * t;
+                    let py = newPoint.y + dy * t;
+
+                    // 4. 距離が 20n+10 のときは y 座標を +10 シフト
+                    //    （10, 30, 50, ... => currentDist % 20 === 10）
+                    if (currentDist % 20 === 10) {
+                      py += 10;
+                    }
+
+                    if (!(step === steps)) {
+                      points.push({ x: px, y: py });
+                    }
+                    tsuika.push({ x: px, y: py });
+                    currentDist += interval;
+                  }
+                  if (step === steps) {
+                    lastPoint = newPoint2;
+                  }
+                } else if ((horizonSogo0 - koyuDivideL -koyuDivideR) > 0) {
+                  const newPoint3 = {
+                    x: startPoint.x 
+                    + lengthP + horizonSogo + sogoDivideL - koyuDivideL
+                    + haichiRight.haichiLengthX,
+                    y: startPoint.y 
+                    + lengthP + horizonKoyu 
+                    + haichiRight.haichiLengthY + gaps.rightGap
+                  };
+                  const newPoint4 = {
+                    x: startPoint.x 
+                    + lengthP + horizonSogo + sogoDivideL + koyuDivideR
+                    + haichiRight.haichiLengthX,
+                    y: startPoint.y 
+                    + lengthP + horizonKoyu - horizonKoyu0
+                    + haichiRight.haichiLengthY - gaps.rightGap
+                  };
+
+                  // ジグザグに線を追加していく。
+                  if(newPoint3){
+                    const dx = newPoint3.x - newPoint1.x;
+                    const dy = newPoint3.y - newPoint1.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    // 3. 10 間隔ずつ「距離が lineDist = 10, 20, 30, ...」になる位置を計算して点を作る
+                    //    ただし「distance が 10 間隔より短い」場合はループしないで抜ける
+                    const interval = 10;
+                    let currentDist = interval;
+                    tsuika.push(newPoint1);
+
+                    while (currentDist < distance) {
+                      // 線分上での割合 (0 ~ 1)
+                      const t = currentDist / distance;
+
+                      // 補間して点を生成
+                      let px = newPoint1.x + dx * t;
+                      let py = newPoint1.y + dy * t;
+
+                      // 4. 距離が 20n+10 のときは y 座標を +10 シフト
+                      //    （10, 30, 50, ... => currentDist % 20 === 10）
+                      if (currentDist % 20 === 10) {
+                        py -= 10;
+                      }
+
+                      points.push({ x: px, y: py });
+                      tsuika.push({ x: px, y: py });
+
+                      currentDist += interval;
+                    }
+                  }
+                  if(newPoint4){
+                    const dx = newPoint2.x - newPoint4.x;
+                    const dy = newPoint2.y - newPoint4.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+
+                    // 3. 10 間隔ずつ「距離が lineDist = 10, 20, 30, ...」になる位置を計算して点を作る
+                    //    ただし「distance が 10 間隔より短い」場合はループしないで抜ける
+                    const interval = 10;
+                    let currentDist = interval;
+
+                    while (currentDist < distance) {
+                      // 線分上での割合 (0 ~ 1)
+                      const t = currentDist / distance;
+
+                      // 補間して点を生成
+                      let px = newPoint4.x + dx * t;
+                      let py = newPoint4.y + dy * t;
+
+                      // 4. 距離が 20n+10 のときは y 座標を +10 シフト
+                      //    （10, 30, 50, ... => currentDist % 20 === 10）
+                      if (currentDist % 20 === 10) {
+                        py += 10;
+                      }
+
+                      points.push({ x: px, y: py });
+                      tsuika.push({ x: px, y: py });
+
+                      currentDist += interval;
+                    }
+                    points.push(newPoint2);
+                    tsuika.push(newPoint2);
+                  }
+
+                  const shiftedNewPoint4 =
+                  {
+                    x: newPoint4.x + 10,
+                    y: newPoint4.y + 10
+                  }
+                  const shiftedNewPoint2 =
+                  {
+                    x: newPoint2.x + 10,
+                    y: newPoint2.y + 10
+                  }
+                  naname.push(newPoint3, shiftedNewPoint4, shiftedNewPoint2);
+                } else {
+                  // 斜め線の停滞が起こらない場合
+                  points.push(newPoint2);
+                  naname.push(newPoint2);
+                }
+              } else {
+                // そもそも分割がない場合
+                points.push(newPoint2);
+                naname.push(newPoint2);
+              }
+              // horizonSogoとhorizonKoyuを更新
+              horizonSogo += horizonSogo0;
+              horizonKoyu += horizonKoyu0;
+            }
+          }
+
+          // 記録した点を前から順につないで線分を作成し、x軸への射影が10よりも大きい線分を切り取る
+          const cutSegments: LineSegment[] = [];
+          for (let i = 0; i < points.length - 1; i++) {
+            let start = points[i];
+            let end = points[i + 1];
+            while (Math.abs(end.x - start.x) > 10) {
+              const t = 10 / Math.abs(end.x - start.x);
+              const midPoint: Point = {
+                x: start.x + t * (end.x - start.x),
+                y: start.y + t * (end.y - start.y)
+              };
+              cutSegments.push({ start, end: midPoint });
+              start = midPoint;
+            }
+            cutSegments.push({ start, end });
+          }
+          if (cutSegments.length > 0) {
+          }
+
+          // 切り取った線分を交互に振り分ける
+          const filteredSegments = cutSegments.filter(segment => {
+            return !(segment.start.x === segment.end.x && segment.start.y === segment.end.y);
+          });
+          
+          filteredSegments.forEach(segment => {
+            if (isValley) {
+              valleyfold.push(segment);
+            } else {
+              mountainfold.push(segment);
+            }
+            isValley = !isValley;
+          });
+
+          firstPoint = points[0];
+
+          const addRectangleFolds = (
+            firstPoint: Point,
+            lastPoint: Point,
+            mountainfold: LineSegment[],
+            valleyfold: LineSegment[],
+            teitaiten: Point[]
+          ) => {
+            // 長方形の右の辺の上から、10の間隔で水平な直線を左向きに引く
+            let isValley = false;
+            for (let y = firstPoint.y; y < lastPoint.y; y += 10) {
+              let currentPoint: Point = { x: lastPoint.x, y: y };
+              let direction: 'left' | 'up' = 'left';
+          
+              while (currentPoint.x > firstPoint.x && currentPoint.y < lastPoint.y) {
+                if (direction === 'left') {
+                  const nextPoint: Point = { x: currentPoint.x - 10, y: currentPoint.y };
+          
+                  // filteredSegmentsの元の線分とぶつかったら進路を真下に切り替える
+                  const collision = isPointOnPolyline(currentPoint, naname);
+          
+                  if (collision) {
+                    direction = 'up';
+                  } else {
+                    const fold: LineSegment = { start: currentPoint, end: nextPoint };
+                    const hitTeitai = teitaiten.some(tt => tt.x === currentPoint.x);
+                    if (hitTeitai) {
+                      isValley = !isValley;
+                    }
+                    if (isValley) {
+                      valleyfold.push(fold);
+                    } else {
+                      mountainfold.push(fold);
+                    }
+                    currentPoint = nextPoint;
+                  }
+                }
+          
+                if (direction === 'up') {
+                  const nextPoint: Point = { x: currentPoint.x, y: currentPoint.y + 10 };
+          
+                  const fold: LineSegment = { start: currentPoint, end: nextPoint };
+                  if (isValley) {
+                    valleyfold.push(fold);
+                  } else {
+                    mountainfold.push(fold);
+                  }
+                  currentPoint = nextPoint;
+                }
+              }
+          
+              isValley = !isValley;
+            }
+
+            // 追加段折りによる折り線を追加
+            tsuika.forEach((p) => {
+              if (p.x < firstPoint.x || p.x > lastPoint.x) {
+                return; // 無視または別処理
+              }
+
+              const segment: LineSegment = {
+                start: { x: p.x, y: firstPoint.y },
+                end: { x: p.x, y: lastPoint.y },
+              };
+
+              const offset = p.x - firstPoint.x;
+              if (offset % 20 === 0) {
+                mountainfold.push(segment);
+              } else {
+                valleyfold.push(segment);
+              }
+            });
+
+            // mountainfold, valleyfold をまとめて返却
+            return {
+              mountainfold,
+              valleyfold
+            };
+          };
+
+
+          addRectangleFolds(
+            firstPoint,
+            lastPoint,
+            mountainfold,
+            valleyfold,
+            tsuika
+          )
+        }
+      } 
+    return {
+      mountainfold,
+      valleyfold
+    };
+  };
+
+  // 全てのThreePartからCPを計算
+  const generateThreePartsCreasePattern =
+  (
+    threeParts: ThreeParts[], 
+    processedPolyline: Point[],
+    sogoHaichiPerLine: DividingLengthPerLines[],
+    sogoHaichi: SogoHaichi[],
+  ): CreasePattern => {
+    const mountainfold: LineSegment[] = [];
+    const valleyfold: LineSegment[] = [];
+    threeParts.forEach((threePart) => {
+      const danori = getAdditionalDanori(threePart, processedPolyline, sogoHaichi)
+      const cp = generateOneThreePartCreasePattern(threePart, danori, sogoHaichiPerLine, 20);
+      mountainfold.push(...cp.mountainfold);
+      valleyfold.push(...cp.valleyfold);
+    })
+    return {
+      mountainfold,
+      valleyfold
+    }
+  }
 
   // 複数の折り線集合を１つにまとめる関数。
   function mergeCreasePatterns(patterns: (CreasePattern | undefined | null)[]): CreasePattern {
@@ -1957,14 +3000,6 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
     return result;
   };
 
-  const generateThreePartsCreasePattern = (
-    threeParts: ThreeParts[],
-    divide: DividingLengthPerLines[]
-  ): CreasePattern => {
-    return 
-  }
-
-
   const generatePaper = (
     boundingRectangle: Point[],
     dividePerLine: DividingLengthPerLines[]
@@ -2026,15 +3061,10 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
         const sogoHaichiPerLine = convertToGlobalDividingLengthPerLines(sogoHaichi);
   
         const segmentCP: CreasePattern = generateSegmentsCreasePattern(sogoHaichi, sogoHaichiPerLine);
-        const resultCP = mergeCreasePatterns([segmentCP]);
         const paper = generatePaper(boundingRectangle, sogoHaichiPerLine);
 
-        const oneThreePart = concaveToThreeParts(concaveParts[0]);
-        const koyuHaichi = getKoyuHaichi(oneThreePart, processedPolygonPoints);
-        const kihonryoiki = getKihonRyoiki(oneThreePart);
-        const additionalDanori = getAdditionalDanori(oneThreePart, processedPolygonPoints, sogoHaichi);
-  
-        console.log("localHaichi, ,processedLocal, sogoHaichi, sogoHaichiPerLine, koyuHaichi,kihonryoiki, tsuikaDanori", localHaichi, processedLocalHaichi, sogoHaichi, sogoHaichiPerLine, koyuHaichi, kihonryoiki, additionalDanori);
+        const threePartCP = generateThreePartsCreasePattern(allThreeParts, processedPolygonPoints, sogoHaichiPerLine, sogoHaichi);
+        const resultCP = mergeCreasePatterns([threePartCP, segmentCP]);
   
         // キャンバスのサイズ
         const canvasWidth = canvas.width;
@@ -2121,4 +3151,4 @@ const DrawPanelWithCompute: React.FC<DrawPanelWithComputeProps> = ({ points: pol
   );
 };
 
-export default DrawPanelWithCompute;;
+export default DrawPanelWithCompute;
